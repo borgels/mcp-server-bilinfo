@@ -1,24 +1,25 @@
-// Act as a person (src/act-as.ts): the host's verified person reaches the handler through the call scope, a refusal
-// comes back as `actAsRefused` with a fixed text, a malformed person refuses the call before anything is sent, and the
-// email is never written to the audit or put in a result.
+// Act as a person (src/act-as.ts). The Listing API has no users, so a read is always made with the account's
+// credentials. What every server guarantees still holds here: the host's verified person reaches a handler through
+// the call scope, a refusal comes back as `actAsRefused` with a fixed text, a malformed person refuses the call
+// before anything is sent, and the email is never sent to Bilinfo, written to the audit or put in a result.
 import { describe, expect, it, vi } from 'vitest';
 import { ActAsRefusedError, normaliseActAs } from '../src/act-as.js';
-import { currentActAs } from '../src/example/policy.js';
-import { createExampleGateway } from '../src/gateway.js';
-import { BASE } from './helpers.js';
+import { currentActAs } from '../src/bilinfo/policy.js';
+import { createBilinfoGateway } from '../src/gateway.js';
+import { exportBody, gatewayOptions, sampleStock } from './helpers.js';
 
-const KEY = 'Zq7pX2vK9mWb4TnR8yLc3HdJ6fGs1QeU';
-const EMAIL = 'Mette.Hansen@Demobyg.example';
+const PASSWORD = 'pppp-aaaa-ssss-wwww-6';
+const EMAIL = 'Mette.Hansen@Fjordbybiler.example';
 
-/** What create_item's handler throws instead of calling the API, as a server's handler does when it finds no user. */
+/** What the handlers throw instead of calling the API, as a server's handler does when it finds no user. */
 const handler = vi.hoisted(() => ({ refuse: undefined as Error | undefined }));
-vi.mock('../src/example/items.js', async original => {
-  const actual = await original<typeof import('../src/example/items.js')>();
+vi.mock('../src/bilinfo/vehicles.js', async original => {
+  const actual = await original<typeof import('../src/bilinfo/vehicles.js')>();
   return {
     ...actual,
-    createItem: (...args: Parameters<typeof actual.createItem>) => {
+    fetchVehicles: (...args: Parameters<typeof actual.fetchVehicles>) => {
       if (handler.refuse) return Promise.reject(handler.refuse);
-      return actual.createItem(...args);
+      return actual.fetchVehicles(...args);
     },
   };
 });
@@ -26,23 +27,21 @@ vi.mock('../src/example/items.js', async original => {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-/** A gateway whose upstream records the person in scope at each request, and can refuse as a server would. */
+/** A gateway whose upstream records the person in scope at each request, and what was sent. */
 function gateway(refuse?: ActAsRefusedError) {
   handler.refuse = refuse;
   const seen: Array<string | undefined> = [];
+  const sent: string[] = [];
   const records: Array<Record<string, unknown>> = [];
-  const fetchImpl: typeof fetch = async () => {
+  const fetchImpl: typeof fetch = async (input, init) => {
     seen.push(currentActAs()?.email);
-    return json({ id: 'i1', name: 'n' });
+    sent.push(`${String(input)} ${JSON.stringify(init?.headers ?? {})}`);
+    return json(exportBody(sampleStock()));
   };
-  const gw = createExampleGateway({
-    apiKey: KEY,
-    baseUrl: BASE,
-    fetchImpl,
-    maxAttempts: 1,
-    policy: { enableWrites: true, audit: record => void records.push({ ...record }) },
-  });
-  return { gw, seen, records };
+  const gw = createBilinfoGateway(
+    gatewayOptions({ password: PASSWORD, fetchImpl, maxAttempts: 1, policy: { audit: record => void records.push({ ...record }) } }),
+  );
+  return { gw, seen, sent, records };
 }
 
 describe('normaliseActAs', () => {
@@ -62,17 +61,28 @@ describe('normaliseActAs', () => {
 describe('a gateway call with actAs', () => {
   it('gives the handler the person through the call scope, and only for that call', async () => {
     const { gw, seen } = gateway();
-    expect((await gw.callTool('create_item', { name: 'n' }, { caller: 'p1', actAs: { email: EMAIL } })).isError).toBeUndefined();
-    expect((await gw.callTool('create_item', { name: 'n' }, { caller: 'p1' })).isError).toBeUndefined();
+    expect((await gw.callTool('stock_overview', {}, { caller: 'p1', actAs: { email: EMAIL } })).isError).toBeUndefined();
+    expect((await gw.callTool('stock_overview', {}, { caller: 'p1' })).isError).toBeUndefined();
     expect(seen).toEqual([EMAIL.toLowerCase(), undefined]);
+  });
+
+  it('reads with the credentials of the account and never sends the email to Bilinfo', async () => {
+    const { gw, sent } = gateway();
+    const result = await gw.callTool('list_vehicles', {}, { caller: 'p1', actAs: { email: EMAIL, name: 'Mette Hansen' } });
+    expect(result.isError).toBeUndefined();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.toLowerCase()).not.toContain('mette');
+    expect(sent[0]!.toLowerCase()).not.toContain(EMAIL.toLowerCase());
+    expect(JSON.stringify(result).toLowerCase()).not.toContain(EMAIL.toLowerCase());
   });
 
   it('answers a refusal from the handler with actAsRefused and a fixed text, never the email', async () => {
     for (const refusal of ['no_user', 'not_permitted'] as const) {
       const { gw } = gateway(new ActAsRefusedError(refusal));
-      const result = await gw.callTool('create_item', { name: 'n' }, { caller: 'p1', actAs: { email: EMAIL } });
+      const result = await gw.callTool('stock_overview', {}, { caller: 'p1', actAs: { email: EMAIL } });
       expect(result.isError).toBe(true);
       expect(result.actAsRefused).toBe(refusal);
+      expect(result.content[0]?.text).toMatch(/^Afvist: /);
       expect(JSON.stringify(result).toLowerCase()).not.toContain(EMAIL.toLowerCase());
     }
   });
@@ -80,7 +90,7 @@ describe('a gateway call with actAs', () => {
   it('refuses a malformed person before anything is sent, null included', async () => {
     for (const actAs of [{ email: 'not an email' }, null, { email: 'a\u0000b@example.test' }]) {
       const { gw, seen } = gateway();
-      const result = await gw.callTool('create_item', { name: 'n' }, { caller: 'p1', actAs: actAs as never });
+      const result = await gw.callTool('stock_overview', {}, { caller: 'p1', actAs: actAs as never });
       expect(result, JSON.stringify(actAs)).toMatchObject({ isError: true, actAsRefused: 'invalid' });
       expect(seen).toEqual([]);
     }
@@ -89,41 +99,43 @@ describe('a gateway call with actAs', () => {
   it('keeps the person of each call to that call when calls run at the same time', async () => {
     const { gw, seen } = gateway();
     await Promise.all([
-      gw.callTool('create_item', { name: 'a' }, { actAs: { email: 'a@demobyg.example' } }),
-      gw.callTool('create_item', { name: 'b' }, { actAs: { email: 'b@demobyg.example' } }),
-      gw.callTool('create_item', { name: 'c' }),
+      gw.callTool('stock_overview', {}, { actAs: { email: 'a@fjordbybiler.example' } }),
+      gw.callTool('list_vehicles', {}, { actAs: { email: 'b@fjordbybiler.example' } }),
+      gw.callTool('stock_overview', {}),
     ]);
-    expect([...seen].sort()).toEqual(['a@demobyg.example', 'b@demobyg.example', undefined].sort());
+    expect([...seen].sort()).toEqual(['a@fjordbybiler.example', 'b@fjordbybiler.example', undefined].sort());
   });
 
   it('never writes the email to the audit', async () => {
     const { gw, records } = gateway();
-    await gw.callTool('get_item', { itemId: 'i1' }, { caller: 'p1', actAs: { email: EMAIL } });
-    await gw.callTool('create_item', { name: 'n' }, { caller: 'p1', actAs: { email: EMAIL } });
+    await gw.callTool('stock_overview', {}, { caller: 'p1', actAs: { email: EMAIL } });
+    await gw.callTool('list_vehicles', { make: 'Ford' }, { caller: 'p1', actAs: { email: EMAIL } });
     expect(records.length).toBeGreaterThan(0);
     expect(JSON.stringify(records).toLowerCase()).not.toContain(EMAIL.toLowerCase());
   });
 
   it('keeps actAsRefused only on an error result', async () => {
     const { gw } = gateway();
-    const result = await gw.callTool('get_item', { itemId: 'i1' }, { actAs: { email: EMAIL } });
+    const result = await gw.callTool('stock_overview', {}, { actAs: { email: EMAIL } });
     expect(result.isError).toBeUndefined();
     expect('actAsRefused' in result).toBe(false);
   });
 });
 
 describe('the refusal of a malformed person', () => {
-  it('passes the same sink check as every other result: no piece of the key leaves, field names included', async () => {
-    // A key the first filter admits that shares a piece with the result's field name actAsRefused.
-    const apiKey = 'Zq7pactAsRK9mWb4TnR8yLc3Hd';
-    const gw = createExampleGateway({ apiKey, baseUrl: BASE, fetchImpl: async () => json({}), maxAttempts: 1, policy: { enableWrites: true } });
-    const result = await gw.callTool('create_item', { name: 'n' }, { actAs: null as never });
+  it('passes the same sink check as every other result, and a password that shares text with a field name is no problem', async () => {
+    handler.refuse = undefined;
+    // A password that shares a piece with the result's field name actAsRefused.
+    const password = 'pppp-actAs-wwww-7';
+    const gw = createBilinfoGateway(gatewayOptions({ password, fetchImpl: async () => json({}), maxAttempts: 1 }));
+    const result = await gw.callTool('stock_overview', {}, { actAs: null as never });
     expect(result.isError).toBe(true);
     const text = JSON.stringify(result);
-    for (let i = 0; i + 6 <= apiKey.length; i += 1) expect(text, apiKey.slice(i, i + 6)).not.toContain(apiKey.slice(i, i + 6));
+    expect(text).not.toContain(password);
+    expect(result.actAsRefused).toBe('invalid');
   });
 
   it('keeps dotted addresses that are valid', () => {
-    expect(normaliseActAs({ email: 'mette.k.hansen@demobyg.example' })).toEqual({ email: 'mette.k.hansen@demobyg.example' });
+    expect(normaliseActAs({ email: 'mette.k.hansen@fjordbybiler.example' })).toEqual({ email: 'mette.k.hansen@fjordbybiler.example' });
   });
 });

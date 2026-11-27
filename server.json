@@ -1,49 +1,66 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.borgels/mcp-server-example",
-  "title": "Example",
-  "description": "Unofficial MCP server for the Example API.",
+  "name": "io.github.borgels/mcp-server-bilinfo",
+  "title": "Bilinfo",
+  "description": "Unofficial MCP server for Bilinfo: a car dealer's cars, ads, prices and leads.",
   "repository": {
-    "url": "https://github.com/borgels/mcp-server-example",
+    "url": "https://github.com/borgels/mcp-server-bilinfo",
     "source": "github"
   },
-  "version": "0.4.0",
+  "version": "0.1.0",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
-      "identifier": "mcp-server-example",
-      "version": "0.4.0",
+      "identifier": "mcp-server-bilinfo",
+      "version": "0.1.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
       },
       "environmentVariables": [
         {
-          "name": "EXAMPLE_API_KEY",
-          "description": "API key for the Example API.",
-          "isRequired": true,
+          "name": "BILINFO_USERNAME",
+          "description": "User name of the Bilinfo API account (Listing API)."
+        },
+        {
+          "name": "BILINFO_PASSWORD",
+          "description": "Password of the Bilinfo API account (Listing API).",
           "isSecret": true
         },
         {
-          "name": "EXAMPLE_BASE_URL",
-          "description": "Base URL of the Example API.",
-          "isRequired": true,
-          "placeholder": "https://api.vendor.test/v1"
+          "name": "BILINFO_CLIENT_ID",
+          "description": "Client id registered with Bilinfo's authorization service (Car API, Leads API, Model Catalog)."
         },
         {
-          "name": "EXAMPLE_ENABLE_WRITES",
-          "description": "Enable the write tools.",
-          "format": "boolean",
-          "default": "false"
+          "name": "BILINFO_CLIENT_SECRET",
+          "description": "Client secret that goes with the client id.",
+          "isSecret": true
         },
         {
-          "name": "EXAMPLE_DISABLED_TOOLS",
+          "name": "BILINFO_SUBSCRIPTION_KEY",
+          "description": "Subscription key of Bilinfo's API gateway (publicapi.bilinfo.net), when Bilinfo gives one.",
+          "isSecret": true
+        },
+        {
+          "name": "BILINFO_DEALER_ID",
+          "description": "GUID of the dealer; limits reads of vehicles and leads to that dealer, and is the dealer whose cars are created, changed and sold."
+        },
+        {
+          "name": "BILINFO_ENVIRONMENT",
+          "description": "production (default) or qa, Bilinfo's test environment."
+        },
+        {
+          "name": "BILINFO_ENABLE_WRITES",
+          "description": "Set to true to enable the tools that change something in Bilinfo."
+        },
+        {
+          "name": "BILINFO_DISABLED_TOOLS",
           "description": "Comma-separated tool names to disable."
         },
         {
-          "name": "EXAMPLE_AUDIT_LOG",
-          "description": "Path of the JSONL audit log. Write tools refuse to run if it cannot be written.",
+          "name": "BILINFO_AUDIT_LOG",
+          "description": "Path of the JSONL audit log of tool calls. No answer from Bilinfo is written to it.",
           "format": "filepath"
         }
       ]

@@ -20,14 +20,21 @@
  * - **The server adds the email nowhere.** It is only sent upstream to find
  *   the user. The server never writes it to its audit (the audit has the
  *   host's `caller`, which the host chooses) and never puts it in a text or
- *   field of its own. Data the system returns is passed on as it is, so a
- *   result can hold the address when the system's own data does (for example
- *   the person's own user record).
+ *   field of its own. Data the system returns is passed on as it is.
  * - **A malformed `actAs` refuses the call.** It is never dropped silently,
  *   since that would make the call as the key's own user. Only an absent
  *   (`undefined`) `actAs` means "no person"; `null` is refused too.
  *
  * Without `actAs` a call runs as it always has: as the key's own user.
+ *
+ * Bilinfo: none of its APIs has users to act as. The Listing API reads the
+ * account's vehicles, and the Car API and the Leads API act as the client
+ * Bilinfo registered for the integration. A read with a valid `actAs` is
+ * therefore a plain read with the connection's credentials. A change with
+ * `actAs` is refused (`not_permitted`) and not sent, because it could only
+ * be made as the connection itself. This server never sends the email
+ * anywhere. A malformed `actAs` is refused, as on every server, so a host's
+ * mistake does not pass unnoticed.
  */
 
 /** The person a call is made for, as the host verified them. */
@@ -45,9 +52,9 @@ export const ACT_AS_REFUSALS: readonly ActAsRefusal[] = Object.freeze(['invalid'
 
 /** Our own fixed texts for a refusal; never the email, never the vendor's text. */
 export const ACT_AS_TEXTS: Readonly<Record<ActAsRefusal, string>> = Object.freeze({
-  invalid: 'Refused: the person to act as is not a valid email address; nothing was sent.',
-  no_user: 'Refused: the person has no single active user in the system with that email; nothing was changed.',
-  not_permitted: 'Refused: the key may not act as another user in the system; nothing was changed.',
+  invalid: 'Afvist: personen, der handles på vegne af, er ikke angivet med en gyldig e-mailadresse. Der blev ikke sendt noget.',
+  no_user: 'Afvist: personen har ikke netop én aktiv bruger i systemet med den e-mailadresse. Der blev ikke ændret noget.',
+  not_permitted: 'Afvist: forbindelsen må ikke handle på vegne af en anden bruger i systemet. Der blev ikke ændret noget.',
 });
 
 /** Thrown by a handler (or the client) when a call cannot be made as the person. */
