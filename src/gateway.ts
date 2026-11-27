@@ -133,7 +133,7 @@ export interface BilinfoGatewayOptions extends Omit<BilinfoClientOptions, 'crede
   //   Model Catalog: creating, changing and selling cars, leads, model lookups).
   // They are used exactly as given: nothing is trimmed, and no value is refused for its length or its characters.
   // subscriptionKey, dealerId, environment and baseUrl are optional (BilinfoClientOptions): without dealerId the instance
-  // reads every vehicle and lead of the account and cannot change a car, and without baseUrl it uses the Listing API's
+  // reads every vehicle and lead of the account and cannot change a car or a lead, and without baseUrl it uses the Listing API's
   // address in the environment.
   /**
    * Instance policy from the host. When given, the instance reads no policy

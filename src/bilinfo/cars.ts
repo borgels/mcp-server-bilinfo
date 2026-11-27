@@ -41,7 +41,7 @@ export const CAR_OPTION_KINDS = Object.keys(CAR_OPTION_PATHS) as CarOptionKind[]
 
 /** In Danish: the person who asked reads them. */
 export const NO_DEALER =
-  'Denne forbindelse er ikke sat op til en bestemt forhandler, så der kan ikke oprettes, rettes eller sælges biler (BILINFO_DEALER_ID).';
+  'Denne forbindelse er ikke sat op til en bestemt forhandler, så der kan ikke oprettes, rettes eller sælges biler, og kundehenvendelser kan ikke ændres (BILINFO_DEALER_ID).';
 export const OPTIONS_UNREADABLE = 'Bilinfo svarede i en form, der ikke kan læses som en liste af valgmuligheder.';
 export const OPERATION_UNREADABLE =
   'Bilinfo svarede i en form, der ikke kan læses. Det er uvist, om ændringen er modtaget; se bilen i Bilinfo, før den sendes igen.';

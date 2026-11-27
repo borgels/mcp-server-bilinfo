@@ -3,7 +3,7 @@
 // the Model Catalog. Everything is answered by a stand-in: no request leaves the test, and every value is invented.
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
-import { CARS_READ, CARS_WRITE, MAX_VERSION, nextVersion, NO_VERSION_LEFT, OPERATION_REFUSED, OPERATION_TEXTS } from '../src/bilinfo/cars.js';
+import { CARS_READ, CARS_WRITE, MAX_VERSION, nextVersion, NO_DEALER, NO_VERSION_LEFT, OPERATION_REFUSED, OPERATION_TEXTS } from '../src/bilinfo/cars.js';
 import { BilinfoClient, SERVICE_URLS, SUBSCRIPTION_KEY_HEADER, UPSTREAM_HOST_SUFFIXES } from '../src/bilinfo/client.js';
 import { LEAD_NOT_FOUND, LEADS_READ, LEADS_WRITE } from '../src/bilinfo/leads.js';
 import { MODELS_DRILL_DOWN } from '../src/bilinfo/models.js';
@@ -521,6 +521,17 @@ describe('the leads', () => {
     }
     const none = gatewayWith({ [`GET ${LEADS_URL}`]: { body: { leads: [] } } }, { policy: { enableWrites: true } });
     expect(texts(await none.gw.callTool('update_lead', { leadId: LEAD_ID, version: 5, status: 'Sold' })).join(' ')).toBe(LEAD_NOT_FOUND);
+  });
+
+  it('are never changed by an instance without a dealer: nothing is read or sent', async () => {
+    const { gw, fetchImpl } = gatewayWith(
+      { [`GET ${LEADS_URL}`]: { body: { leads: [{ ...lead(1, NORDKYST.DealerGuid), id: LEAD_ID, version: 5 }] } }, [`PUT ${LEAD_URL}`]: { body: {} } },
+      { policy: { enableWrites: true }, dealerId: undefined },
+    );
+    const result = await gw.callTool('update_lead', { leadId: LEAD_ID, version: 5, status: 'Sold' });
+    expect(result.isError).toBe(true);
+    expect(texts(result).join(' ')).toBe(NO_DEALER);
+    expect(notToken(fetchImpl)).toHaveLength(0);
   });
 });
 

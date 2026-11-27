@@ -15,6 +15,7 @@
  * the caller as Bilinfo sends it and never kept.
  */
 import { encodePathParam } from '../path-params.js';
+import { NO_DEALER } from './cars.js';
 import type { ApiTarget, UpstreamClient } from './client.js';
 
 /** The Leads API's scopes (developer portal, each operation's "Authorization scope"). */
@@ -98,7 +99,7 @@ export interface LeadContact {
 /**
  * The lead with this id and version, read from the Leads API before a change: the leads above version - 1 begin with
  * the one that has this version, as long as it has not changed since. It must be the lead with this id, and the
- * instance's dealer's when the instance has one. Otherwise nothing is changed.
+ * instance's dealer's. Otherwise nothing is changed.
  */
 async function assertOwnLead(client: UpstreamClient, leadId: string, version: number): Promise<void> {
   const answer = await client.get<unknown>(LIST_LEADS_PATH, { version: version - 1, count: 1 }, LEADS_READ);
@@ -113,7 +114,7 @@ async function assertOwnLead(client: UpstreamClient, leadId: string, version: nu
     !isRecord(lead) ||
     id !== leadId.toLowerCase() ||
     lead.version !== version ||
-    (client.dealerId !== undefined && dealer !== client.dealerId)
+    dealer !== client.dealerId
   ) {
     throw new Error(LEAD_NOT_FOUND);
   }
@@ -124,6 +125,8 @@ export async function updateLead(
   client: UpstreamClient,
   input: { leadId: string; version: number; status: LeadStatus; contact?: LeadContact },
 ) {
+  // A lead is changed only for the instance's own dealer: without one, nothing tells whose lead it is.
+  if (!client.dealerId) throw new Error(NO_DEALER);
   await assertOwnLead(client, input.leadId, input.version);
   const body: Record<string, unknown> = { status: input.status };
   if (input.contact) {

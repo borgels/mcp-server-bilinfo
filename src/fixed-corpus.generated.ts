@@ -220,7 +220,7 @@ export const FIXED_CORPUS: readonly string[] = [
   "Den nye status.",
   "Denne forbindelse er ikke sat op til at læse biler til salg: brugernavn og adgangskode til Bilinfo mangler (BILINFO_USERNAME og BILINFO_PASSWORD).",
   "Denne forbindelse er ikke sat op til biler, kundehenvendelser og modelopslag: klient-id og hemmelighed fra Bilinfo mangler (BILINFO_CLIENT_ID og BILINFO_CLIENT_SECRET).",
-  "Denne forbindelse er ikke sat op til en bestemt forhandler, så der kan ikke oprettes, rettes eller sælges biler (BILINFO_DEALER_ID).",
+  "Denne forbindelse er ikke sat op til en bestemt forhandler, så der kan ikke oprettes, rettes eller sælges biler, og kundehenvendelser kan ikke ændres (BILINFO_DEALER_ID).",
   "Der kunne ikke oprettes forbindelse til Bilinfo. Prøv igen om lidt.",
   "Det styres af den, der har sat forbindelsen op.",
   "Det styres i opsætningen (BILINFO_ENABLE_WRITES).",
