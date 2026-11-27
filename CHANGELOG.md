@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-- First version, built from the MCP server template: nine tools for a car
+- First version, built from the MCP server template: ten tools for a car
   dealer's everyday work in Bilinfo, from the APIs Bilinfo publishes on
   developer.bilinfo.net (read 27 November 2026).
 - Listing API (HTTP Basic): `bilinfo_list_vehicles` lists a dealer's vehicles
@@ -23,6 +23,10 @@
   when given, the customer's contact details.
 - Model Catalog: `bilinfo_find_model` looks a car up by registration number,
   VIN, or make, model, year and fuel, for the variant id a car needs.
+- `bilinfo_check_connection` says which parts of Bilinfo the connection
+  reaches, from one small request per API, and passes on nothing Bilinfo
+  answered. The three changes are marked `write`, not `destructive`: none
+  deletes anything.
 - Changes are off by default, logged before they are sent, sent once, and out
   of reach of the read tools. Nothing deletes a car or a lead. A change with
   `actAs` is refused: Bilinfo's APIs have no users to act as.

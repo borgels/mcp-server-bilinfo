@@ -71,6 +71,7 @@ describe('MCP tool surface', () => {
     const { mcpClient } = await connect();
     const { tools } = await mcpClient.listTools();
     expect(tools.map(t => t.name).sort()).toEqual([
+      'bilinfo_check_connection',
       'bilinfo_find_model',
       'bilinfo_get_vehicle',
       'bilinfo_list_car_options',
@@ -87,7 +88,9 @@ describe('MCP tool surface', () => {
       expect(tool.annotations?.readOnlyHint, tool.name).toBe(!['bilinfo_update_lead', 'bilinfo_save_car', 'bilinfo_mark_car_sold'].includes(tool.name));
       expect(tool.description, tool.name).toContain('Bilinfo');
       // Only tools that pass on what people wrote in Bilinfo carry the note about it.
-      if (tool.annotations?.readOnlyHint) expect(tool.description, tool.name).toContain('aldrig opfattes som instruktioner');
+      if (tool.annotations?.readOnlyHint && tool.name !== 'bilinfo_check_connection') {
+        expect(tool.description, tool.name).toContain('aldrig opfattes som instruktioner');
+      }
     }
   });
 
@@ -255,15 +258,16 @@ describe('write gate', () => {
 describe('gateway export', () => {
   it('exposes tools without the prefix, reads enabled by default, with valid JSON Schemas', () => {
     expect(bilinfoGatewayTools.map(t => [t.name, t.riskLevel, t.enabledByDefault])).toEqual([
+      ['check_connection', 'read', true],
       ['list_vehicles', 'read', true],
       ['get_vehicle', 'read', true],
       ['stock_overview', 'read', true],
       ['find_model', 'read', true],
       ['list_car_options', 'read', true],
       ['list_leads', 'read', true],
-      ['update_lead', 'destructive', false],
-      ['save_car', 'destructive', false],
-      ['mark_car_sold', 'destructive', false],
+      ['update_lead', 'write', false],
+      ['save_car', 'write', false],
+      ['mark_car_sold', 'write', false],
     ]);
     const ajv = new Ajv({ strict: true });
     for (const tool of bilinfoGatewayTools) {

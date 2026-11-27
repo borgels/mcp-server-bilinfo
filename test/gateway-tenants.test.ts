@@ -274,6 +274,7 @@ describe('per-instance redaction', () => {
 
 /** Sample input per tool, used to check each tool's declared upstream requests. */
 const SAMPLE_INPUTS: Record<string, Record<string, unknown>> = {
+  check_connection: {},
   list_vehicles: { make: 'Skoda' },
   get_vehicle: { vehicleId: listingId(1) },
   stock_overview: {},
@@ -287,6 +288,7 @@ const SAMPLE_INPUTS: Record<string, Record<string, unknown>> = {
 
 /** What each tool's service answers in the catalog test, in the form Bilinfo documents. */
 const TOOL_ANSWERS: Record<string, unknown> = {
+  check_connection: {},
   list_vehicles: exportBody(sampleStock()),
   get_vehicle: exportBody(sampleStock()),
   stock_overview: exportBody(sampleStock()),
@@ -356,7 +358,6 @@ describe('tool catalog', () => {
     for (const entry of bilinfoToolCatalog) {
       const input = SAMPLE_INPUTS[entry.name];
       expect(input, `sample input for ${entry.name}`).toBeDefined();
-      const service = entry.upstream[0]!.service;
       const fetchImpl = vi.fn(async (url: string) =>
         url === SERVICES.token
           ? Response.json({ access_token: ACCESS_TOKEN, expires_in: 360, token_type: 'Bearer' })
@@ -368,18 +369,22 @@ describe('tool catalog', () => {
 
       const values: Record<string, unknown> = { ...input, dealerId: FJORDBY.DealerGuid };
       const declared = entry.upstream.map(op => ({
+        service: op.service,
         method: op.method,
         path: op.path.replace(/\{(\w+)\}/g, (_, name: string) => encodeURIComponent(String(values[name] ?? ''))),
       }));
-      const base = SERVICE_BASES[service]!;
       const made = (fetchImpl.mock.calls as unknown as Array<[string, RequestInit]>)
         // Asking for the access token is not a request of the tool's own: every tool but the Listing API's makes it.
         .filter(([url]) => url !== SERVICES.token)
         .map(([url, init]) => {
-          expect(url.startsWith(base), `${entry.name} called ${new URL(url).host}`).toBe(true);
-          return { method: init.method, path: new URL(url).pathname.slice(new URL(base).pathname.replace(/\/$/, '').length) };
+          // Each request goes to the base of a service the tool declares.
+          const service = entry.upstream.map(op => op.service).find(name => url.startsWith(`${SERVICE_BASES[name]}/`));
+          expect(service, `${entry.name} called ${new URL(url).host}`).toBeDefined();
+          const base = SERVICE_BASES[service!]!;
+          return { service, method: init.method, path: new URL(url).pathname.slice(new URL(base).pathname.replace(/\/$/, '').length) };
         });
-      expect(made, entry.name).toHaveLength(1);
+      // The connection check makes one small request per API; every other tool makes one.
+      expect(made, entry.name).toHaveLength(entry.name === 'check_connection' ? 3 : 1);
       for (const request of made) {
         expect(declared, `${entry.name} made ${request.method} ${request.path}`).toContainEqual(request);
       }

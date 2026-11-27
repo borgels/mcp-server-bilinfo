@@ -226,6 +226,8 @@ export interface UpstreamClient {
   post<T>(path: string, body: unknown, target: ApiTarget): Promise<T>;
   /** Change. Sent once, never retried. */
   put<T>(path: string, body: unknown, target: ApiTarget): Promise<T>;
+  /** Ask for an access token for the target's scope and drop it: whether Bilinfo issues one. Changes nothing. */
+  probeToken(target: ApiTarget): Promise<void>;
   /** The dealer every read is limited to and every car belongs to, when the instance was given one. */
   readonly dealerId?: string;
 }
@@ -237,6 +239,7 @@ export function readOnlyClient(client: UpstreamClient, toolName: string): Upstre
   };
   return {
     get: (path, query, target) => client.get(path, query, target),
+    probeToken: target => client.probeToken(target),
     post: refuse('POST'),
     put: refuse('PUT'),
     dealerId: client.dealerId,
@@ -358,6 +361,13 @@ export class BilinfoClient implements UpstreamClient {
     return this.request<T>('GET', target, this.buildUrl(path, query, target.service));
   }
 
+  async probeToken(target: ApiTarget): Promise<void> {
+    if (target.scope === undefined) {
+      throw new Error('probeToken needs a target with a scope');
+    }
+    await this.accessToken(target.scope);
+  }
+
   async post<T>(path: string, body: unknown, target: ApiTarget): Promise<T> {
     return this.request<T>('POST', target, this.buildUrl(path, undefined, target.service), body);
   }
@@ -384,7 +394,7 @@ export class BilinfoClient implements UpstreamClient {
   private async authorization(target: ApiTarget): Promise<string> {
     if (target.scope === undefined) {
       if (!this.credentials) {
-        throw new Error(MISSING_CREDENTIALS);
+        throw new MissingCredentialsError('listing', MISSING_CREDENTIALS);
       }
       return `Basic ${this.credentials}`;
     }
@@ -398,7 +408,7 @@ export class BilinfoClient implements UpstreamClient {
    */
   private async accessToken(scope: string): Promise<string> {
     if (!this.clientCredentials) {
-      throw new Error(MISSING_CLIENT);
+      throw new MissingCredentialsError('client', MISSING_CLIENT);
     }
     const init: RequestInit = {
       method: 'POST',
@@ -617,6 +627,17 @@ function isRedirect(status: number): boolean {
 /** The redirect's Location is the vendor's text and is never quoted; only the status and our own words. */
 function redirectRefusedMessage(response: Response, _method: HttpMethod, _url: string): string {
   return `Bilinfo henviste til en anden adresse (HTTP ${response.status}). Henvisninger følges ikke, så der blev ikke hentet noget.`;
+}
+
+/** Thrown when the instance was not given the credentials a request needs: nothing was sent. */
+export class MissingCredentialsError extends Error {
+  /** `listing`: the Listing API account; `client`: the client id and secret. */
+  readonly missing: 'listing' | 'client';
+  constructor(missing: 'listing' | 'client', message: string) {
+    super(message);
+    this.name = 'MissingCredentialsError';
+    this.missing = missing;
+  }
 }
 
 /** Texts a person may read, in Danish. They never hold a credential, an address or anything Bilinfo wrote. */

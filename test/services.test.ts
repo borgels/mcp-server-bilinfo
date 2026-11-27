@@ -446,6 +446,31 @@ describe('the model catalog', () => {
   });
 });
 
+describe('the connection check', () => {
+  it('says which parts the connection reaches, without passing on anything Bilinfo answered', async () => {
+    const { gw, fetchImpl } = gatewayWith({
+      [`GET ${SERVICES.cars}/api/cardetail/colors`]: { body: [{ id: COLOR, name: 'Sort' }] },
+      [`GET ${LEADS_URL}`]: { status: 403, body: { message: 'tekst fra Bilinfo' } },
+      [`GET https://listing.bilinfo.test/listingapi/api/export`]: { body: { Vehicles: [{ Make: 'Skoda' }] } },
+    });
+    const result = await gw.callTool('check_connection', {});
+    expect(result.isError, texts(result).join(' ')).toBeUndefined();
+    expect(result.structuredContent).toEqual({ dealer: true, listing: 'ok', cars: 'ok', leads: 'refused', models: 'ok' });
+    expect(JSON.stringify(result)).not.toContain('Skoda');
+    expect(JSON.stringify(result)).not.toContain('tekst fra Bilinfo');
+    // No customer's lead is read: the version asked for is above every lead's, and only one at most.
+    const leads = new URL(callsOf(fetchImpl).find(([url]) => url.startsWith(LEADS_URL))![0]);
+    expect(Number(leads.searchParams.get('version'))).toBe(Number.MAX_SAFE_INTEGER);
+    expect(leads.searchParams.get('count')).toBe('1');
+    const listing = new URL(callsOf(fetchImpl).find(([url]) => url.includes('/api/export'))![0]);
+    expect(listing.searchParams.get('sinceDays')).toBe('1');
+
+    const listingOnly = gatewayWith({}, { clientId: undefined, clientSecret: undefined, dealerId: undefined });
+    const partial = await listingOnly.gw.callTool('check_connection', {});
+    expect(partial.structuredContent).toEqual({ dealer: false, listing: 'unavailable', cars: 'not_set_up', leads: 'not_set_up', models: 'not_set_up' });
+  });
+});
+
 describe('addresses of the services', () => {
   it('are the ones Bilinfo publishes, per environment, and credentials go nowhere else', () => {
     expect(SERVICE_URLS.production.token).toBe('https://accounts.ecgh.dk/oauth/connect/token');

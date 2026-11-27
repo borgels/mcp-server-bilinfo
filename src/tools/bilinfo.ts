@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 import {
+  CHANGE_TOOL_ANNOTATIONS,
   READ_TOOL_ANNOTATIONS,
   UNTRUSTED_CONTENT_NOTE,
   UNTRUSTED_RESULT_NOTE,
@@ -18,6 +19,7 @@ import {
   type SaveCarInput,
 } from '../bilinfo/cars.js';
 import { readOnlyClient, type BilinfoService, type UpstreamClient } from '../bilinfo/client.js';
+import { checkConnection } from '../bilinfo/connection.js';
 import { LEAD_STATUSES, LIST_LEADS_PATH, listLeads, MAX_LEADS, UPDATE_LEAD_PATH, updateLead } from '../bilinfo/leads.js';
 import { DRILL_DOWN_BY_NUMBER_PATH, DRILL_DOWN_PATH, findModel } from '../bilinfo/models.js';
 import { ActAsRefusedError, type ActAs } from '../act-as.js';
@@ -83,7 +85,7 @@ const pictureUrlSchema = z
 /** The one request the three vehicle tools make: the Listing API has no other. */
 const READ_EXPORT: UpstreamOperation = { access: 'read', method: 'GET', service: 'listing', path: EXPORT_PATH };
 
-type ToolAnnotations = typeof READ_TOOL_ANNOTATIONS | typeof WRITE_TOOL_ANNOTATIONS;
+type ToolAnnotations = typeof READ_TOOL_ANNOTATIONS | typeof CHANGE_TOOL_ANNOTATIONS | typeof WRITE_TOOL_ANNOTATIONS;
 
 /**
  * One upstream request a tool may make: `read` or `write`, the HTTP method,
@@ -145,6 +147,24 @@ function defineTool<S extends z.ZodRawShape>(definition: Omit<ToolDefinition<S>,
 }
 
 export const BILINFO_TOOLS: ToolDefinition[] = [
+  defineTool({
+    name: 'bilinfo_check_connection',
+    title: 'Forbindelsen til Bilinfo',
+    description:
+      'Ser, hvilke dele af Bilinfo forbindelsen når: biler til salg, oprettelse af biler, kundehenvendelser og ' +
+      'modelkataloget. Hver del er ok, refused (Bilinfo sagde nej), not_set_up (forbindelsen har ikke adgang til den ' +
+      'del) eller unavailable (Bilinfo svarede ikke). Læser ingen biler eller henvendelser.',
+    inputShape: {},
+    annotations: READ_TOOL_ANNOTATIONS,
+    returnsUpstreamContent: false,
+    summary: 'Forbindelsen til Bilinfo er prøvet.',
+    upstream: [
+      READ_EXPORT,
+      { access: 'read', method: 'GET', service: 'cars', path: CAR_OPTION_PATHS.colors },
+      { access: 'read', method: 'GET', service: 'leads', path: LIST_LEADS_PATH },
+    ],
+    handler: async client => checkConnection(client),
+  }),
   defineTool({
     name: 'bilinfo_list_vehicles',
     title: 'Biler til salg (Bilinfo)',
@@ -316,7 +336,7 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
         .optional()
         .describe('Kundens kontaktoplysninger, når de skal rettes. Udelad for kun at sætte status.'),
     },
-    annotations: WRITE_TOOL_ANNOTATIONS,
+    annotations: CHANGE_TOOL_ANNOTATIONS,
     returnsUpstreamContent: false,
     summary: 'Kundehenvendelsen er opdateret i Bilinfo.',
     upstream: [{ access: 'write', method: 'PUT', service: 'leads', path: UPDATE_LEAD_PATH }],
@@ -435,7 +455,7 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
         .optional()
         .describe('Tandrem.'),
     },
-    annotations: WRITE_TOOL_ANNOTATIONS,
+    annotations: CHANGE_TOOL_ANNOTATIONS,
     returnsUpstreamContent: false,
     summary: 'Bilen er sendt til Bilinfo.',
     upstream: [{ access: 'write', method: 'POST', service: 'cars', path: SAVE_CAR_PATH }],
@@ -453,7 +473,7 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
       soldTo: z.enum(['private', 'business']).describe('private: solgt til en privatperson. business: solgt til et firma (engros).'),
       salesPrice: moneySchema.optional().describe('Salgsprisen i kroner, hvis den skal med.'),
     },
-    annotations: WRITE_TOOL_ANNOTATIONS,
+    annotations: CHANGE_TOOL_ANNOTATIONS,
     returnsUpstreamContent: false,
     summary: 'Bilen er meldt solgt til Bilinfo.',
     upstream: [{ access: 'write', method: 'POST', service: 'cars', path: SELL_CAR_PATH }],

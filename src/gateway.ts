@@ -52,6 +52,8 @@ import {
  */
 
 export type { AuditSink, InstancePolicy } from './bilinfo/policy.js';
+/** Our Danish sentence for each of Bilinfo's operation statuses (a car saved or sold), by its number. */
+export { OPERATION_TEXTS as BILINFO_OPERATION_TEXTS } from './bilinfo/cars.js';
 export { ACT_AS_REFUSALS, ACT_AS_TEXTS } from './act-as.js';
 
 /** The person a call is made for (CallContext.actAs; see src/act-as.ts). */
