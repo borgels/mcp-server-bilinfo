@@ -2,7 +2,7 @@
   "name": "mcp-server-bilinfo",
   "version": "0.1.0",
   "mcpName": "io.github.borgels/mcp-server-bilinfo",
-  "description": "Unofficial MCP server for Bilinfo: a car dealer's vehicles for sale, dealer and user lookups.",
+  "description": "Unofficial MCP server for Bilinfo: a car dealer's cars, ads, prices and leads.",
   "type": "module",
   "main": "./dist/transports/stdio.js",
   "exports": {
@@ -41,6 +41,7 @@
     "bilinfo",
     "car-dealer",
     "vehicles",
+    "leads",
     "denmark"
   ],
   "author": "",

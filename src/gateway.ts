@@ -35,7 +35,7 @@ import {
  * Several gateway instances (one per dealer, say) can run in one process.
  * Each instance uses only the credentials passed to createBilinfoGateway
  * (never BILINFO_USERNAME, BILINFO_PASSWORD, BILINFO_CLIENT_ID,
- * BILINFO_CLIENT_SECRET, BILINFO_PLUGIN_ID, BILINFO_DEALER_ID,
+ * BILINFO_CLIENT_SECRET, BILINFO_SUBSCRIPTION_KEY, BILINFO_DEALER_ID,
  * BILINFO_ENVIRONMENT or BILINFO_BASE_URL from the environment) and redacts
  * errors with its own secrets only.
  *
@@ -127,10 +127,12 @@ export interface GatewayToolCatalogEntry {
 export interface BilinfoGatewayOptions extends Omit<BilinfoClientOptions, 'credentialEnv'> {
   // At least one pair is required, and nothing is read from the environment:
   // - username and password: the Bilinfo API account of the Listing API (the dealer's vehicles for sale);
-  // - clientId and clientSecret: the client registered with Bilinfo's authorization service (every other service).
+  // - clientId and clientSecret: the client registered with Bilinfo's authorization service (Car API, Leads API and
+  //   Model Catalog: creating, changing and selling cars, leads, model lookups).
   // They are used exactly as given: nothing is trimmed, and no value is refused for its length or its characters.
-  // pluginId, dealerId, environment and baseUrl are optional (BilinfoClientOptions): without dealerId the instance
-  // reads every vehicle of the account, and without baseUrl it uses the Listing API's address.
+  // subscriptionKey, dealerId, environment and baseUrl are optional (BilinfoClientOptions): without dealerId the instance
+  // reads every vehicle and lead of the account and cannot change a car, and without baseUrl it uses the Listing API's
+  // address in the environment.
   /**
    * Instance policy from the host. When given, the instance reads no policy
    * or audit variables from the environment (see InstancePolicy). A host
@@ -231,7 +233,7 @@ function credentialPair(
 export function createBilinfoGateway(options: BilinfoGatewayOptions) {
   // What the host gave and what is built from it: every error is masked against them.
   const secrets: string[] = [];
-  for (const key of ['password', 'clientSecret'] as const) {
+  for (const key of ['password', 'clientSecret', 'subscriptionKey'] as const) {
     const given: unknown = (options as Partial<BilinfoGatewayOptions> | undefined)?.[key];
     if (typeof given === 'string') secrets.push(given);
   }
@@ -242,7 +244,7 @@ export function createBilinfoGateway(options: BilinfoGatewayOptions) {
     if (pairs.every(pair => pair === undefined)) {
       throw new ConfigError(
         'createBilinfoGateway requires options.username and options.password (the Listing API), options.clientId and ' +
-          'options.clientSecret (the other services), or both. Embedded instances do not read credentials from the environment.',
+          'options.clientSecret (cars, leads and the model catalog), or both. Embedded instances do not read credentials from the environment.',
       );
     }
     for (const pair of pairs) {

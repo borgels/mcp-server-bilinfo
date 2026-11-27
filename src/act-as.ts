@@ -27,11 +27,14 @@
  *
  * Without `actAs` a call runs as it always has: as the key's own user.
  *
- * Bilinfo: the Listing API has no users. An account's credentials read the
- * account's vehicles, and there is no one to act as. A call with a valid
- * `actAs` is therefore a plain read with the account's credentials, and this
- * server never sends the email anywhere. A malformed `actAs` is still
- * refused, as on every server, so a host's mistake does not pass unnoticed.
+ * Bilinfo: none of its APIs has users to act as. The Listing API reads the
+ * account's vehicles, and the Car API and the Leads API act as the client
+ * Bilinfo registered for the integration. A read with a valid `actAs` is
+ * therefore a plain read with the connection's credentials. A change with
+ * `actAs` is refused (`not_permitted`) and not sent, because it could only
+ * be made as the connection itself. This server never sends the email
+ * anywhere. A malformed `actAs` is refused, as on every server, so a host's
+ * mistake does not pass unnoticed.
  */
 
 /** The person a call is made for, as the host verified them. */

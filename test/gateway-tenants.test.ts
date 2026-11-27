@@ -13,7 +13,6 @@ import {
   EXPORT_URL,
   FJORDBY,
   NORDKYST,
-  PLUGIN_ID,
   SERVICES,
   USERNAME,
   auditLines,
@@ -91,7 +90,7 @@ describe('explicit gateway credentials', () => {
       BILINFO_BASE_URL: 'https://elsewhere.bilinfo.net/listingapi',
       BILINFO_CLIENT_ID: 'env-client',
       BILINFO_CLIENT_SECRET: ENV_KEY,
-      BILINFO_PLUGIN_ID: 'env-plugin',
+      BILINFO_SUBSCRIPTION_KEY: ENV_KEY,
       BILINFO_ENVIRONMENT: 'qa',
     };
     process.env = new Proxy(env, {
@@ -119,7 +118,7 @@ describe('explicit gateway credentials', () => {
       'BILINFO_BASE_URL',
       'BILINFO_CLIENT_ID',
       'BILINFO_CLIENT_SECRET',
-      'BILINFO_PLUGIN_ID',
+      'BILINFO_SUBSCRIPTION_KEY',
       'BILINFO_ENVIRONMENT',
     ]) {
       expect(reads.has(name), name).toBe(false);
@@ -278,13 +277,26 @@ const SAMPLE_INPUTS: Record<string, Record<string, unknown>> = {
   list_vehicles: { make: 'Skoda' },
   get_vehicle: { vehicleId: listingId(1) },
   stock_overview: {},
-  find_dealer: { cvr: '12345678' },
-  list_users: {},
-  report_application_status: { reference: 'sag-0001', loan: { status: 3, statusText: 'Godkendt', providerName: 'Eksempel Finans' } },
+  find_model: { number: 'AB12345' },
+  list_car_options: { kind: 'colors' },
+  list_leads: {},
+  update_lead: { leadId: '11111111-2222-4333-8444-555555555555', status: 'Contacted' },
+  save_car: { carId: 'LAGER-1001', variantId: '0a0a0a0a-1111-4222-8333-444444444444', mileage: 1000, cashPrice: 150000 },
+  mark_car_sold: { carId: 'LAGER-1001', soldTo: 'private' },
 };
 
-/** What each service answers in the catalog test: the vehicles, an empty list, or nothing. */
-const SERVICE_ANSWERS: Record<string, unknown> = { listing: exportBody(sampleStock()), dealerLookup: [], userLookup: [], casePlugin: null };
+/** What each tool's service answers in the catalog test, in the form Bilinfo documents. */
+const TOOL_ANSWERS: Record<string, unknown> = {
+  list_vehicles: exportBody(sampleStock()),
+  get_vehicle: exportBody(sampleStock()),
+  stock_overview: exportBody(sampleStock()),
+  find_model: { variants: [] },
+  list_car_options: [],
+  list_leads: { leads: [] },
+  update_lead: {},
+  save_car: { status: 30 },
+  mark_car_sold: { status: 30 },
+};
 /** Base path of each service on the test hosts. */
 const SERVICE_BASES: Record<string, string> = { listing: BASE, ...SERVICES };
 
@@ -304,8 +316,12 @@ describe('tool catalog', () => {
         }
       }
     }
-    // One tool changes something in Bilinfo; every other tool reads.
-    expect(bilinfoToolCatalog.filter(entry => entry.riskLevel !== 'read').map(entry => entry.name)).toEqual(['report_application_status']);
+    // Three tools change something in Bilinfo; every other tool reads.
+    expect(bilinfoToolCatalog.filter(entry => entry.riskLevel !== 'read').map(entry => entry.name)).toEqual([
+      'update_lead',
+      'save_car',
+      'mark_car_sold',
+    ]);
 
     const { mcpClient } = await connect();
     const { tools } = await mcpClient.listTools();
@@ -344,13 +360,13 @@ describe('tool catalog', () => {
       const fetchImpl = vi.fn(async (url: string) =>
         url === SERVICES.token
           ? Response.json({ access_token: ACCESS_TOKEN, expires_in: 360, token_type: 'Bearer' })
-          : Response.json(SERVICE_ANSWERS[service]),
+          : Response.json(TOOL_ANSWERS[entry.name]),
       );
       const gw = createBilinfoGateway(fullOptions({ fetchImpl: fetchImpl as unknown as typeof fetch, policy: { enableWrites: true } }));
       const result = await gw.callTool(entry.name, input! as never);
       expect(result.isError, texts(result).join(' ')).toBeUndefined();
 
-      const values: Record<string, unknown> = { ...input, pluginId: PLUGIN_ID, dealerId: FJORDBY.DealerGuid };
+      const values: Record<string, unknown> = { ...input, dealerId: FJORDBY.DealerGuid };
       const declared = entry.upstream.map(op => ({
         method: op.method,
         path: op.path.replace(/\{(\w+)\}/g, (_, name: string) => encodeURIComponent(String(values[name] ?? ''))),

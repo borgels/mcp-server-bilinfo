@@ -64,26 +64,26 @@ export async function connect(routes: Record<string, Stub> = {}) {
 /** The other services, on hosts that do not exist either. */
 export const SERVICES = {
   token: 'https://accounts.bilinfo.test/oauth/connect/token',
-  dealerLookup: 'https://dealerlookup.bilinfo.test/api',
-  userLookup: 'https://userlookup.bilinfo.test/api',
-  casePlugin: 'https://gw.bilinfo.test',
+  cars: 'https://publicapi.bilinfo.test/carapi',
+  leads: 'https://publicapi.bilinfo.test/leadsapi',
+  models: 'https://publicapi.bilinfo.test/modelcatalog',
 } as const;
-/** An invented client, plugin identifier and access token. */
+/** An invented client, gateway subscription key and access token. */
 export const CLIENT_ID = 'fjordby-klient';
 export const CLIENT_SECRET = 'hhhh-jjjj-qqqq-xxxx-2';
-export const PLUGIN_ID = 'eksempelfinans';
+export const SUBSCRIPTION_KEY = 'ssss-kkkk-abonnement-3';
 export const ACCESS_TOKEN = 'zzzz.yyyy.token-0001';
 /** The authorization service issuing a token. */
 export const TOKEN_ROUTE: Record<string, Stub> = {
   [`POST ${SERVICES.token}`]: { body: { access_token: ACCESS_TOKEN, expires_in: 360, token_type: 'Bearer' } },
 };
 
-/** Gateway options with both pairs of invented credentials, a dealer, a plugin identifier and the test hosts. */
+/** Gateway options with both pairs of invented credentials, a subscription key, a dealer and the test hosts. */
 export function fullOptions(extra: Partial<BilinfoGatewayOptions> = {}): BilinfoGatewayOptions {
   return gatewayOptions({
     clientId: CLIENT_ID,
     clientSecret: CLIENT_SECRET,
-    pluginId: PLUGIN_ID,
+    subscriptionKey: SUBSCRIPTION_KEY,
     dealerId: FJORDBY.DealerGuid,
     serviceUrls: SERVICES,
     ...extra,

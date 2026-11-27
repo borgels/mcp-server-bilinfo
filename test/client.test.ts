@@ -80,13 +80,14 @@ describe('BilinfoClient', () => {
     expect(seenUrl).not.toContain(expected);
   });
 
-  it('hands read tools a view that cannot send a change, and has no method for anything Bilinfo does not document', async () => {
+  it('hands read tools a view that cannot send a change, and has no method for anything this server does not do', async () => {
     const fetchImpl = makeFetch(() => ({}));
     const client = makeClient(fetchImpl);
     const view = readOnlyClient(client, 'bilinfo_list_vehicles');
-    await expect(view.put('/x', {}, { service: 'casePlugin', scope: 'scope' })).rejects.toThrow('refused');
+    await expect(view.put('/x', {}, { service: 'leads', scope: 'scope' })).rejects.toThrow('refused');
+    await expect(view.post('/x', {}, { service: 'cars', scope: 'scope' })).rejects.toThrow('refused');
     expect(fetchImpl).not.toHaveBeenCalled();
-    for (const method of ['post', 'patch', 'delete']) {
+    for (const method of ['patch', 'delete']) {
       expect((client as unknown as Record<string, unknown>)[method], method).toBeUndefined();
     }
   });

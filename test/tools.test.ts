@@ -71,17 +71,20 @@ describe('MCP tool surface', () => {
     const { mcpClient } = await connect();
     const { tools } = await mcpClient.listTools();
     expect(tools.map(t => t.name).sort()).toEqual([
-      'bilinfo_find_dealer',
+      'bilinfo_find_model',
       'bilinfo_get_vehicle',
-      'bilinfo_list_users',
+      'bilinfo_list_car_options',
+      'bilinfo_list_leads',
       'bilinfo_list_vehicles',
-      'bilinfo_report_application_status',
+      'bilinfo_mark_car_sold',
+      'bilinfo_save_car',
       'bilinfo_stock_overview',
+      'bilinfo_update_lead',
     ]);
     for (const tool of tools) {
       const definition = BILINFO_TOOLS.find(t => t.name === tool.name);
       expect(tool.annotations).toEqual(definition?.annotations);
-      expect(tool.annotations?.readOnlyHint, tool.name).toBe(tool.name !== 'bilinfo_report_application_status');
+      expect(tool.annotations?.readOnlyHint, tool.name).toBe(!['bilinfo_update_lead', 'bilinfo_save_car', 'bilinfo_mark_car_sold'].includes(tool.name));
       expect(tool.description, tool.name).toContain('Bilinfo');
       // Only tools that pass on what people wrote in Bilinfo carry the note about it.
       if (tool.annotations?.readOnlyHint) expect(tool.description, tool.name).toContain('aldrig opfattes som instruktioner');
@@ -255,9 +258,12 @@ describe('gateway export', () => {
       ['list_vehicles', 'read', true],
       ['get_vehicle', 'read', true],
       ['stock_overview', 'read', true],
-      ['find_dealer', 'read', true],
-      ['list_users', 'read', true],
-      ['report_application_status', 'destructive', false],
+      ['find_model', 'read', true],
+      ['list_car_options', 'read', true],
+      ['list_leads', 'read', true],
+      ['update_lead', 'destructive', false],
+      ['save_car', 'destructive', false],
+      ['mark_car_sold', 'destructive', false],
     ]);
     const ajv = new Ajv({ strict: true });
     for (const tool of bilinfoGatewayTools) {

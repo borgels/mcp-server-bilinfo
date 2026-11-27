@@ -24,28 +24,35 @@ export interface BilinfoClientOptions {
   /** Client secret that goes with `clientId`. When omitted, read from BILINFO_CLIENT_SECRET in `credentialEnv`. */
   clientSecret?: string;
   /**
-   * The identifier Bilinfo allots the implementer of a Case Plugin (a finance or insurance company). Only the
-   * Case Plugin services need it. When omitted, read from BILINFO_PLUGIN_ID in `credentialEnv`.
+   * Subscription key of Bilinfo's API gateway (the header Ocp-Apim-Subscription-Key), for the services on
+   * publicapi.bilinfo.net (Car API, Leads API, Model Catalog). Bilinfo's own Car API example sends one; the developer
+   * portal marks it as optional. When omitted, read from BILINFO_SUBSCRIPTION_KEY in `credentialEnv`; without one,
+   * none is sent.
    */
-  pluginId?: string;
+  subscriptionKey?: string;
   /**
-   * Which of Bilinfo's documented environments the services other than the Listing API are called in:
-   * `production` (default) or `qa`. When omitted, read from BILINFO_ENVIRONMENT in `credentialEnv`.
+   * Which of Bilinfo's environments the services are called in: `production` (default) or `qa`, Bilinfo's test
+   * environment that an integration goes through before production. When omitted, read from BILINFO_ENVIRONMENT in
+   * `credentialEnv`.
    */
   environment?: BilinfoEnvironment;
   /** Addresses of single services, for a mock. They pass the same host check as `baseUrl`. */
   serviceUrls?: Partial<Record<Exclude<BilinfoService, 'listing'>, string>>;
   /**
    * GUID of one Bilinfo dealer (Bilinfo -> Dealer settings). When set, every
-   * read is limited to that dealer's vehicles; Bilinfo offers it for accounts
-   * that cover several dealers. When omitted, read from BILINFO_DEALER_ID in
-   * `credentialEnv`.
+   * read is limited to that dealer's vehicles and leads; Bilinfo offers the
+   * filter for accounts that cover several dealers. The Car API needs it: a car
+   * is always created, changed and sold for this dealer and no other. When
+   * omitted, read from BILINFO_DEALER_ID in `credentialEnv`.
    */
   dealerId?: string;
-  /** Base URL of the Listing API. When omitted, read from BILINFO_BASE_URL in `credentialEnv`, else DEFAULT_BASE_URL. */
+  /**
+   * Base URL of the Listing API. When omitted, read from BILINFO_BASE_URL in `credentialEnv`, else the Listing API's
+   * address in the environment (SERVICE_URLS).
+   */
   baseUrl?: string;
   /**
-   * Where omitted credentials (username, password, clientId, clientSecret, pluginId, dealerId, environment,
+   * Where omitted credentials (username, password, clientId, clientSecret, subscriptionKey, dealerId, environment,
    * baseUrl) are read from. Defaults to
    * process.env for the standalone server. The gateway passes `{}`, so an
    * embedded instance only ever uses the credentials it was given.
@@ -76,35 +83,49 @@ export interface BilinfoClientOptions {
 
 export type QueryValue = string | number | boolean | null | undefined;
 
-/** GET reads, PUT changes (the Case Plugin's status report), POST only asks the authorization service for a token. */
+/** GET reads; POST and PUT change something (a car, a lead), except the POST that asks for an access token. */
 type HttpMethod = 'GET' | 'PUT' | 'POST';
 
 /** Header that carries the credentials (HTTP Basic or a Bearer token); error text redaction follows it. */
 export const CREDENTIAL_HEADER = 'Authorization';
 
-/** The Listing API has one fixed address; the documentation gives no other environment for it. */
+/** The Listing API's address in production, as its documentation gives it. */
 export const DEFAULT_BASE_URL = 'https://gw.bilinfo.net/listingapi';
 
-/** The services of Bilinfo this client can call. `token` is the authorization service. */
-export type BilinfoService = 'listing' | 'token' | 'dealerLookup' | 'userLookup' | 'casePlugin';
+/**
+ * Subscription key header of Bilinfo's API gateway (Azure API Management), as Bilinfo's Car API example sends it.
+ * A secret of the instance: redacted like the credentials.
+ */
+export const SUBSCRIPTION_KEY_HEADER = 'Ocp-Apim-Subscription-Key';
+
+/**
+ * The services of Bilinfo this client can call. `token` is the authorization service; `cars` is the Car API,
+ * `leads` the Leads API and `models` the Model Catalog.
+ */
+export type BilinfoService = 'listing' | 'token' | 'cars' | 'leads' | 'models';
 export type BilinfoEnvironment = 'production' | 'qa';
 
-/** The addresses Bilinfo documents, per environment (Auth Services, Shared Services and Case Plugin documents). */
+/**
+ * The addresses per environment. The QA addresses are the ones Bilinfo's developer portal (developer.bilinfo.net)
+ * publishes for each API (carapiqa, leadsapiqa, modelcatalogqa and listingapiqa on publicapi.bilinfo.net) and the
+ * token endpoints of the Auth Services document (v1.2.2). The production addresses of the Car API, Leads API and
+ * Model Catalog are the same paths without "qa": the portal does not list them, so they are to be confirmed with
+ * Bilinfo during onboarding.
+ */
 export const SERVICE_URLS: Readonly<Record<BilinfoEnvironment, Readonly<Record<BilinfoService, string>>>> = {
   production: {
     listing: DEFAULT_BASE_URL,
     token: 'https://accounts.ecgh.dk/oauth/connect/token',
-    dealerLookup: 'https://dealerlookupservice.ecgh.dk/api',
-    userLookup: 'https://userlookupservice.ecgh.dk/api',
-    casePlugin: 'https://gw.bilinfo.net',
+    cars: 'https://publicapi.bilinfo.net/carapi',
+    leads: 'https://publicapi.bilinfo.net/leadsapi',
+    models: 'https://publicapi.bilinfo.net/modelcatalog',
   },
   qa: {
-    // No QA environment is documented for the Listing API.
-    listing: DEFAULT_BASE_URL,
+    listing: 'https://publicapi.bilinfo.net/listingapiqa',
     token: 'https://accounts.qa01.ecgh.dk/oauth/connect/token',
-    dealerLookup: 'https://qa01-dealerlookupservice.ecgh.dk/api',
-    userLookup: 'https://qa01-userlookupservice.ecgh.dk/api',
-    casePlugin: 'https://gw.qa01.bilinfo.net',
+    cars: 'https://publicapi.bilinfo.net/carapiqa',
+    leads: 'https://publicapi.bilinfo.net/leadsapiqa',
+    models: 'https://publicapi.bilinfo.net/modelcatalogqa',
   },
 };
 
@@ -127,7 +148,7 @@ export const LISTING_API: ApiTarget = { service: 'listing' };
  */
 export const UPSTREAM_HOST_SUFFIXES: readonly string[] = ['bilinfo.net', 'ecgh.dk'];
 
-/** A Bilinfo dealer id is a GUID (Listing API and Shared Services documents). */
+/** A Bilinfo dealer id is a GUID (Listing API document and the Car API's path). */
 export const DEALER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -195,29 +216,30 @@ const TRANSIENT_NETWORK_CODES = new Set([
 
 /**
  * The client as handed to tool handlers. Read-only tools get a view whose
- * PUT throws (see readOnlyClient), so the write gate does not depend on tool
- * annotations alone.
+ * POST and PUT throw (see readOnlyClient), so the write gate does not depend
+ * on tool annotations alone.
  */
 export interface UpstreamClient {
   /** Read. Without a target it is the Listing API. */
   get<T>(path: string, query?: Record<string, QueryValue>, target?: ApiTarget): Promise<T>;
   /** Change. Sent once, never retried. */
+  post<T>(path: string, body: unknown, target: ApiTarget): Promise<T>;
+  /** Change. Sent once, never retried. */
   put<T>(path: string, body: unknown, target: ApiTarget): Promise<T>;
-  /** The dealer every read is limited to, when the instance was given one. */
+  /** The dealer every read is limited to and every car belongs to, when the instance was given one. */
   readonly dealerId?: string;
-  /** The Case Plugin implementer's identifier, when the instance was given one. */
-  readonly pluginId?: string;
 }
 
 /** A view of the client that only allows GET. */
 export function readOnlyClient(client: UpstreamClient, toolName: string): UpstreamClient {
+  const refuse = (method: string) => async () => {
+    throw new Error(`Read-only tool ${toolName} attempted an upstream ${method}; refused.`);
+  };
   return {
     get: (path, query, target) => client.get(path, query, target),
-    put: async () => {
-      throw new Error(`Read-only tool ${toolName} attempted an upstream PUT; refused.`);
-    },
+    post: refuse('POST'),
+    put: refuse('PUT'),
     dealerId: client.dealerId,
-    pluginId: client.pluginId,
   };
 }
 
@@ -251,8 +273,9 @@ export class BilinfoClient implements UpstreamClient {
   private readonly credentials?: string;
   /** The encoded client id and secret for the authorization service, when both parts are known. */
   private readonly clientCredentials?: string;
+  /** The API gateway's subscription key, when the instance was given one. */
+  private readonly subscriptionKey?: string;
   readonly dealerId?: string;
-  readonly pluginId?: string;
   readonly baseUrl: string;
   private readonly urls: Readonly<Record<BilinfoService, string>>;
   private readonly fetchImpl: typeof fetch;
@@ -268,7 +291,7 @@ export class BilinfoClient implements UpstreamClient {
     const credentialEnv = options.credentialEnv ?? process.env;
     const username = options.username ?? readEnvString('BILINFO_USERNAME', credentialEnv);
     const password = options.password ?? readEnvString('BILINFO_PASSWORD', credentialEnv);
-    this.redactor = new SecretRedactor().addHeader(CREDENTIAL_HEADER).addSecret(password);
+    this.redactor = new SecretRedactor().addHeader(CREDENTIAL_HEADER).addHeader(SUBSCRIPTION_KEY_HEADER).addSecret(password);
     if (username && password) {
       this.credentials = basicCredentials(username, password);
       // What is sent is the encoded form: it is a secret of this instance as well.
@@ -281,9 +304,10 @@ export class BilinfoClient implements UpstreamClient {
       this.clientCredentials = basicCredentials(clientId, clientSecret);
       this.redactor.addSecret(this.clientCredentials);
     }
-    const pluginId = options.pluginId ?? readEnvString('BILINFO_PLUGIN_ID', credentialEnv);
-    if (typeof pluginId === 'string' && pluginId.trim() !== '') {
-      this.pluginId = pluginId.trim();
+    const subscriptionKey = options.subscriptionKey ?? readEnvString('BILINFO_SUBSCRIPTION_KEY', credentialEnv);
+    if (typeof subscriptionKey === 'string' && subscriptionKey !== '') {
+      this.subscriptionKey = subscriptionKey;
+      this.redactor.addSecret(subscriptionKey);
     }
     const dealerId = options.dealerId ?? readEnvString('BILINFO_DEALER_ID', credentialEnv);
     if (dealerId !== undefined) {
@@ -297,7 +321,9 @@ export class BilinfoClient implements UpstreamClient {
     if (environment !== 'production' && environment !== 'qa') {
       throw new ConfigError('The Bilinfo environment (environment, BILINFO_ENVIRONMENT) must be production or qa.');
     }
-    this.baseUrl = trimTrailingSlash(options.baseUrl ?? readEnvString('BILINFO_BASE_URL', credentialEnv) ?? DEFAULT_BASE_URL);
+    this.baseUrl = trimTrailingSlash(
+      options.baseUrl ?? readEnvString('BILINFO_BASE_URL', credentialEnv) ?? SERVICE_URLS[environment].listing,
+    );
     const allowCustomHost = options.allowCustomBaseUrl ?? readEnvBoolean('BILINFO_ALLOW_CUSTOM_BASE_URL', false);
     const urls: Record<BilinfoService, string> = { ...SERVICE_URLS[environment], listing: this.baseUrl };
     for (const [service, url] of Object.entries(options.serviceUrls ?? {})) {
@@ -330,6 +356,10 @@ export class BilinfoClient implements UpstreamClient {
 
   async get<T>(path: string, query?: Record<string, QueryValue>, target: ApiTarget = LISTING_API): Promise<T> {
     return this.request<T>('GET', target, this.buildUrl(path, query, target.service));
+  }
+
+  async post<T>(path: string, body: unknown, target: ApiTarget): Promise<T> {
+    return this.request<T>('POST', target, this.buildUrl(path, undefined, target.service), body);
   }
 
   async put<T>(path: string, body: unknown, target: ApiTarget): Promise<T> {
@@ -380,7 +410,8 @@ export class BilinfoClient implements UpstreamClient {
       },
       body: new URLSearchParams({ grant_type: 'client_credentials', scope }).toString(),
     };
-    const answer = await this.send('POST', this.urls.token, init, TOKEN_REFUSED_STATUS);
+    // Asking for a token changes nothing: it may be retried like a read.
+    const answer = await this.send('POST', this.urls.token, init, { refusedStatus: TOKEN_REFUSED_STATUS, retry: true });
     const token = answer !== null && typeof answer === 'object' ? (answer as { access_token?: unknown }).access_token : undefined;
     if (typeof token !== 'string' || token === '') {
       throw new Error(TOKEN_UNREADABLE);
@@ -388,23 +419,36 @@ export class BilinfoClient implements UpstreamClient {
     return token;
   }
 
-  private async request<T>(method: 'GET' | 'PUT', target: ApiTarget, url: string, body?: unknown): Promise<T> {
+  private async request<T>(method: HttpMethod, target: ApiTarget, url: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'User-Agent': USER_AGENT,
       [CREDENTIAL_HEADER]: await this.authorization(target),
     };
+    // The API gateway's key goes to the services behind it: never to the Listing API or the token service.
+    if (this.subscriptionKey && target.service !== 'listing') {
+      headers[SUBSCRIPTION_KEY_HEADER] = this.subscriptionKey;
+    }
     const init: RequestInit = { method, headers };
     if (body !== undefined) {
       headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    return (await this.send(method, url, init)) as T;
+    // A read may be retried; a change is sent once.
+    return (await this.send(method, url, init, { retry: method === 'GET' })) as T;
   }
 
-  /** One request and its answer. `refusedStatus` lists the statuses that mean the authorization service said no. */
-  private send(method: HttpMethod, url: string, init: RequestInit, refusedStatus?: ReadonlySet<number>): Promise<unknown> {
-    return this.execute(method, url, init, async response => {
+  /**
+   * One request and its answer. `retry` says whether it may be sent again (a read, or the token request);
+   * `refusedStatus` lists the statuses that mean the authorization service said no.
+   */
+  private send(
+    method: HttpMethod,
+    url: string,
+    init: RequestInit,
+    { retry, refusedStatus }: { retry: boolean; refusedStatus?: ReadonlySet<number> },
+  ): Promise<unknown> {
+    return this.execute(method, url, init, retry, async response => {
       if (isRedirect(response.status)) {
         await discardBody(response);
         throw new UpstreamRedirectError(this.redactor.redact(redirectRefusedMessage(response, method, url)), {
@@ -430,19 +474,21 @@ export class BilinfoClient implements UpstreamClient {
   }
 
   /**
-   * Run one logical request: limit concurrency, apply the timeout, and (for
-   * everything but a PUT, which is sent once) retry on retryable statuses and
-   * transient network errors within the retry budget. `handle` runs while the concurrency slot is
-   * held, so body reads count against it.
+   * Run one logical request: limit concurrency, apply the timeout, and (only
+   * when `retry`: a read or the token request, never a change) retry on
+   * retryable statuses and transient network errors within the retry budget.
+   * `handle` runs while the concurrency slot is held, so body reads count
+   * against it.
    */
   private async execute<R>(
     method: HttpMethod,
     url: string,
     init: RequestInit,
+    retry: boolean,
     handle: (response: Response) => Promise<R>,
   ): Promise<R> {
     // A change is never sent twice: after a lost answer nobody knows whether the first one arrived.
-    const maxAttempts = method === 'PUT' ? 1 : this.maxAttempts;
+    const maxAttempts = retry ? this.maxAttempts : 1;
     let slept = 0;
 
     for (let attempt = 1; ; attempt += 1) {
@@ -577,7 +623,7 @@ function redirectRefusedMessage(response: Response, _method: HttpMethod, _url: s
 const MISSING_CREDENTIALS =
   'Denne forbindelse er ikke sat op til at læse biler til salg: brugernavn og adgangskode til Bilinfo mangler (BILINFO_USERNAME og BILINFO_PASSWORD).';
 const MISSING_CLIENT =
-  'Denne forbindelse er ikke sat op til dette: klient-id og hemmelighed fra Bilinfo mangler (BILINFO_CLIENT_ID og BILINFO_CLIENT_SECRET).';
+  'Denne forbindelse er ikke sat op til biler, kundehenvendelser og modelopslag: klient-id og hemmelighed fra Bilinfo mangler (BILINFO_CLIENT_ID og BILINFO_CLIENT_SECRET).';
 const TOKEN_UNREADABLE = 'Bilinfo gav ikke adgang: svaret fra Bilinfos adgangstjeneste kunne ikke læses.';
 /** What the authorization service answers when it will not issue a token for the client and the scope. */
 const TOKEN_REFUSED_STATUS: ReadonlySet<number> = new Set([400, 401, 403]);

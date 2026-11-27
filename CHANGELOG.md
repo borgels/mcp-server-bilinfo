@@ -2,24 +2,33 @@
 
 ## 0.1.0
 
-- First version, built from the MCP server template: six tools for the parts
-  of Bilinfo that Bilinfo documents for integrators.
+- First version, built from the MCP server template: nine tools for a car
+  dealer's everyday work in Bilinfo, from the APIs Bilinfo publishes on
+  developer.bilinfo.net (read 27 November 2026).
 - Listing API (HTTP Basic): `bilinfo_list_vehicles` lists a dealer's vehicles
   for sale with filters (make, model, fuel, price range, model year, free
   text), sorting and paging; `bilinfo_get_vehicle` returns one listing with
   every field Bilinfo sends; `bilinfo_stock_overview` counts listings and
   cars, adds up asking prices per price type and groups cars by make and by
   days since they were created in Bilinfo.
-- Shared Services (OAuth 2.0, client credentials): `bilinfo_find_dealer`
-  looks a dealer up by CVR number, and `bilinfo_list_users` shows the users
-  of the dealer the instance is set up for.
-- Case Plugin: `bilinfo_report_application_status` reports the status of a
-  finance or insurance application to the case in Bilinfo. It is the one
-  change the server can make: off by default, logged before it is sent, sent
-  once, and out of reach of the read tools.
-- Not included, because Bilinfo does not publish their requests: the Car API
-  (create and edit cars) and the Model Catalog. The Case Plugin's sales
-  contract is a PDF file and is not passed on.
+- Car API (OAuth 2.0, client credentials): `bilinfo_save_car` creates a car
+  for the instance's dealer or changes one the connection created (the whole
+  car, with a version that only grows), including taking its ad off Bilbasen
+  and DBA with visibility `Internal`; `bilinfo_mark_car_sold` marks a car as
+  sold; `bilinfo_list_car_options` reads the colours, upholstery and extra
+  equipment a car's ids come from. Bilinfo's answer to a change is passed on
+  as its status number and our own Danish sentence, never Bilinfo's message.
+- Leads API: `bilinfo_list_leads` reads the dealer's leads from Bilbasen,
+  Bilinfo and DBA by version; `bilinfo_update_lead` sets a lead's status and,
+  when given, the customer's contact details.
+- Model Catalog: `bilinfo_find_model` looks a car up by registration number,
+  VIN, or make, model, year and fuel, for the variant id a car needs.
+- Changes are off by default, logged before they are sent, sent once, and out
+  of reach of the read tools. Nothing deletes a car or a lead. A change with
+  `actAs` is refused: Bilinfo's APIs have no users to act as.
+- `BILINFO_ENVIRONMENT=qa` uses Bilinfo's QA addresses; an optional
+  subscription key of Bilinfo's API gateway is sent to the Car API, Leads API
+  and Model Catalog.
 - Nothing is stored: every tool call asks Bilinfo and passes the answer on.
   No answer is kept between calls, and neither is the access token.
 - No credential is refused for its form: any length, with spaces, with æ, ø

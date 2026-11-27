@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.borgels/mcp-server-bilinfo",
   "title": "Bilinfo",
-  "description": "Unofficial MCP server for Bilinfo: a car dealer's vehicles for sale, dealer and user lookups.",
+  "description": "Unofficial MCP server for Bilinfo: a car dealer's cars, ads, prices and leads.",
   "repository": {
     "url": "https://github.com/borgels/mcp-server-bilinfo",
     "source": "github"
@@ -30,7 +30,7 @@
         },
         {
           "name": "BILINFO_CLIENT_ID",
-          "description": "Client id registered with Bilinfo's authorization service (the other services)."
+          "description": "Client id registered with Bilinfo's authorization service (Car API, Leads API, Model Catalog)."
         },
         {
           "name": "BILINFO_CLIENT_SECRET",
@@ -38,12 +38,17 @@
           "isSecret": true
         },
         {
-          "name": "BILINFO_PLUGIN_ID",
-          "description": "Identifier Bilinfo allots a Case Plugin implementer; only the status report needs it."
+          "name": "BILINFO_SUBSCRIPTION_KEY",
+          "description": "Subscription key of Bilinfo's API gateway (publicapi.bilinfo.net), when Bilinfo gives one.",
+          "isSecret": true
         },
         {
           "name": "BILINFO_DEALER_ID",
-          "description": "GUID of one dealer; limits reads of vehicles and users to that dealer."
+          "description": "GUID of the dealer; limits reads of vehicles and leads to that dealer, and is the dealer whose cars are created, changed and sold."
+        },
+        {
+          "name": "BILINFO_ENVIRONMENT",
+          "description": "production (default) or qa, Bilinfo's test environment."
         },
         {
           "name": "BILINFO_ENABLE_WRITES",
