@@ -5,7 +5,7 @@ describe('path param guard', () => {
   it.each(['', ' ', '.', '..', 'a/b', '../x', 'a\\b', '..\\x', 'a?b', 'a#b', '%2e%2e', '%2E', 'a%2fb', 'a%2Fb', '%5c'])(
     'rejects %j',
     value => {
-      expect(() => assertSafePathParam(value, 'id')).toThrow(/Invalid id/);
+      expect(() => assertSafePathParam(value, 'id')).toThrow(/Ugyldig værdi for id/);
     },
   );
 

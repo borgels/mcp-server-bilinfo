@@ -11,7 +11,8 @@ const ENCODED_TRAVERSAL = /%2e|%2f|%5c/i;
 
 export class InvalidPathParamError extends Error {
   constructor(name: string) {
-    super(`Invalid ${name}: must be a single non-empty path segment without '/', '\\', '?', '#', or dot segments.`);
+    // In Danish: the person who asked reads it. The value is not quoted.
+    super(`Ugyldig værdi for ${name}: den må ikke være tom, og den må ikke indeholde /, \\, ? eller # eller kun bestå af punktummer.`);
     this.name = 'InvalidPathParamError';
   }
 }

@@ -1,9 +1,12 @@
-// The sink check (README, "Threat model"): nothing that leaves a gateway holds a piece of 6 characters of the key.
-// Every output is checked in its final form; the round-7 counterexamples and keys spliced from real outputs.
-import { describe, expect, it } from 'vitest';
-import { createExampleGateway } from '../src/gateway.js';
-import { visibleTexts } from '../src/key-admission.js';
-import { BASE } from './helpers.js';
+// The sink check (README, "Threat model"): no password is refused for its form, and no answer or audit record that
+// leaves a gateway holds the password or the encoded credentials, when they can be told from ordinary text.
+import { Buffer } from 'node:buffer';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { basicCredentials } from '../src/bilinfo/client.js';
+import { createBilinfoGateway } from '../src/gateway.js';
+import { visibleTexts } from '../src/secrets.js';
+import { UNEXPECTED_ANSWER } from '../src/bilinfo/vehicles.js';
+import { exportBody, gatewayOptions, installTestWriteTool, listingId, sampleStock, USERNAME, vehicle } from './helpers.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -11,122 +14,165 @@ const json = (body: unknown, status = 200) =>
 /** A vendor-like value that our texts do not share. */
 const PLAIN = 'Zq7pX2vK9mWb4TnR8yLc3HdJ6fGs1QeU';
 
-function pieces(value: string): string[] {
-  const out: string[] = [];
-  for (let i = 0; i + 6 <= value.length; i += 1) out.push(value.slice(i, i + 6));
-  return out;
+let testWrite: ReturnType<typeof installTestWriteTool>;
+beforeEach(() => {
+  testWrite = installTestWriteTool();
+});
+afterEach(() => {
+  testWrite.remove();
+});
+
+/** The secrets of an instance with this password: the password, and the encoded credentials. */
+function secretsOf(password: string): string[] {
+  return [password, basicCredentials(USERNAME, password)];
 }
 
-/** The pieces of the key found in any text a host or a log could see. */
-function leaked(key: string, outputs: unknown[]): string[] {
+/** The whole secrets found in any text a host or a log could see. */
+function leaked(password: string, outputs: unknown[]): string[] {
   const texts = outputs.flatMap(output => (typeof output === 'string' ? [output] : visibleTexts(output)));
-  return pieces(key).filter(piece => texts.some(text => text.includes(piece)));
+  return secretsOf(password).filter(secret => texts.some(text => text.includes(secret)));
 }
 
-const upstream: typeof fetch = async input => {
-  const path = (String(input).split('?')[0] ?? '').slice(BASE.length);
-  if (path === '/items/i1') return json({ id: 'i1', name: 'Item one', status: 'open', riskLevel: 'low' });
-  if (path === '/items') return json({ id: 'i2', name: 'n' }, 201);
-  return json({ message: 'no stub' }, 404);
-};
+const upstream: typeof fetch = async () => json(exportBody(sampleStock()));
 
-/** Every output of a normal session with this key, or the refusal when the key is not admitted. */
-async function outputs(apiKey: string): Promise<{ refused?: string; outputs: unknown[] }> {
+/**
+ * Every answer and audit record of a normal session with this password. The tool list is left out: it is a fixed
+ * text of ours, the same for every instance. Creating the gateway must not throw, whatever the password is.
+ */
+async function outputs(password: string): Promise<unknown[]> {
   const records: unknown[] = [];
-  let gw: ReturnType<typeof createExampleGateway>;
-  try {
-    gw = createExampleGateway({
-      apiKey,
-      baseUrl: BASE,
+  const gw = createBilinfoGateway(
+    gatewayOptions({
+      password,
       fetchImpl: upstream,
       maxAttempts: 1,
       policy: { enableWrites: true, audit: record => void records.push(record) },
-    });
-  } catch (error) {
-    return { refused: (error as Error).message, outputs: [(error as Error).message, (error as Error).name] };
-  }
+    }),
+  );
   const results = [
-    await gw.callTool('get_item', { itemId: 'i1' }, { caller: 'person-1', requestId: 'r1' }),
-    await gw.callTool('create_item', { name: 'n' }, { caller: 'person-1', requestId: 'r2' }),
-    await gw.callTool('get_item', { itemId: 'missing' }),
-    await gw.callTool('no_such_tool', {}),
-    await gw.callTool('get_item', { unknown: 1 }),
+    await gw.callTool('list_vehicles', { make: 'Skoda' }, { caller: 'person-1', requestId: 'r1' }),
+    await gw.callTool('list_vehicles', {}, { caller: `person ${password}`, requestId: password }),
+    await gw.callTool('get_vehicle', { vehicleId: listingId(1) }, { caller: 'person-1', requestId: 'r2' }),
+    await gw.callTool('stock_overview', {}),
+    await gw.callTool('test_write', { vehicleId: 'x' }, { caller: 'person-1', requestId: 'r3' }),
+    await gw.callTool('get_vehicle', { vehicleId: listingId(99) }),
+    await gw.callTool(`no_such_tool ${password}`, {}),
+    await gw.callTool('list_vehicles', { [password]: 1 }),
   ];
-  return { outputs: [gw.tools, ...results, ...records] };
+  return [...results, ...records];
 }
 
 describe('the sink check', () => {
-  it('holds for the round-7 counterexamples', async () => {
-    for (const apiKey of [
+  it('accepts whatever password Bilinfo could issue and keeps the whole of it out of every answer and record', async () => {
+    for (const password of [
+      PLAIN,
+      'med mellemrum 1234',
+      ' kode med mellemrum for og bag ',
+      'blåbærgrød-1234',
+      'Zq7pX2vK9mWb4TnRé',
       'riskLevelQz7pX2vK9mWb',
-      'Zq7pX2visError9mWb4TnR',
       'qz7":"staV8k2mP9',
-      'Zq7pX2-kind,p-Wb4TnR',
       'x"ok":y-0123456789',
+      'Biler til salg 2026',
+      'Bilinfo2026',
+      'Adgangskoden-9471',
       'URI malformedQz7pX2vK9mWb\uD800',
+      '‹redacted›-Zq7pX2vK9mWb',
     ]) {
-      const { refused, outputs: seen } = await outputs(apiKey);
-      if (refused !== undefined) expect(refused, apiKey).toMatch(/key was refused/);
-      expect(leaked(apiKey, seen), apiKey).toEqual([]);
+      const seen = await outputs(password);
+      expect(leaked(password, seen), password).toEqual([]);
+      // The password was put into the caller, the request id, a tool name and a field name: it was redacted there.
+      expect(JSON.stringify(seen), password).toContain('‹redacted›');
     }
   });
 
-  it('refuses a key that is not printable ASCII before anything is built from it', () => {
-    for (const apiKey of ['URI malformedQz7pX2vK9mWb\uD800', 'Zq7pX2vK9mWb4TnRé', 'Zq7pX2 vK9mWb4TnR8y']) {
-      expect(() => createExampleGateway({ apiKey, baseUrl: BASE }), apiKey).toThrow(/key was refused/);
+  it('leaves ordinary words alone: a password that holds a car make does not blank the make out of the answers', async () => {
+    for (const password of ['Skoda-2026', 'Skoda i Fjordby', 'Sommer2026!']) {
+      const seen = await outputs(password);
+      expect(leaked(password, seen), password).toEqual([]);
+      const first = seen[0] as { isError?: boolean; structuredContent: { vehicles: Array<{ make: string }> } };
+      expect(first.isError, password).toBeUndefined();
+      expect(first.structuredContent.vehicles.length, password).toBeGreaterThan(0);
+      for (const vehicle of first.structuredContent.vehicles) expect(vehicle.make, password).toBe('Skoda');
     }
   });
 
-  it('refuses a key that shares a piece with the tool list', () => {
-    expect(() => createExampleGateway({ apiKey: 'riskLevelQz7pX2vK9mWb', baseUrl: BASE })).toThrow(/key was refused/);
+  it('redacts a password that stands whole in the data, and passes the rest of the answer on', async () => {
+    const password = 'Skoda Octavia';
+    const gw = createBilinfoGateway(
+      gatewayOptions({
+        password,
+        fetchImpl: async () => json(exportBody([vehicle(1, { Make: 'Skoda', Model: 'Octavia', Comment: `Pæn ${password} med træk` })])),
+      }),
+    );
+    const result = await gw.callTool('get_vehicle', { vehicleId: listingId(1) });
+    expect(result.isError).toBeUndefined();
+    expect(leaked(password, [result])).toEqual([]);
+    const text = JSON.stringify(result);
+    expect(text).toContain('Pæn ‹redacted› med træk');
+    expect(text).toContain('"Model":"Octavia"');
   });
 
-  it('holds for keys spliced from the outputs of a normal session', async () => {
-    const base = await outputs('Zq7pX2vK9mWb4TnR8yLc3HdJ6fGs1QeU');
-    expect(base.refused).toBeUndefined();
-    const texts = base.outputs.flatMap(output => visibleTexts(output)).filter(text => text.length >= 6);
-    let seed = 7;
-    const random = (n: number) => {
-      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
-      return seed % n;
-    };
-    const filler = (n: number) => Array.from({ length: n }, () => String.fromCharCode(0x30 + random(43))).join('');
-    let admitted = 0;
-    for (let round = 0; round < 60; round += 1) {
-      const text = texts[random(texts.length)]!;
-      const start = random(text.length - 5);
-      const window = text.slice(start, start + 6);
-      if (!/^[\x21-\x7E]{6}$/.test(window)) continue;
-      const apiKey = `${filler(6)}${window}${filler(6)}`;
-      const { refused, outputs: seen } = await outputs(apiKey);
-      if (refused === undefined) admitted += 1;
-      expect(leaked(apiKey, seen), apiKey).toEqual([]);
+  it('does not look for a password that cannot be told from ordinary text: a short one, or a word of our own texts', async () => {
+    for (const password of ['k', 'kort', 'Skoda', 'Bilinfo', 'forhandlerens', 'Ukendt værktøj']) {
+      const records: unknown[] = [];
+      const gw = createBilinfoGateway(
+        gatewayOptions({ password, fetchImpl: upstream, policy: { audit: record => void records.push(record) } }),
+      );
+      const seen = [
+        await gw.callTool('list_vehicles', { make: 'Skoda' }),
+        await gw.callTool('stock_overview', {}),
+        await gw.callTool('no_such_tool', {}),
+        ...records,
+      ];
+      expect(JSON.stringify(seen), password).not.toContain('‹redacted›');
+      expect((seen[0] as { isError?: boolean }).isError, password).toBeUndefined();
     }
-    expect(admitted).toBeGreaterThan(0);
+  });
+
+  it('sends the password to Bilinfo exactly as it was given', async () => {
+    for (const password of [' kode med mellemrum for og bag ', 'blåbærgrød', 'k', 'a:b:c']) {
+      let sent = '';
+      const gw = createBilinfoGateway(
+        gatewayOptions({
+          password,
+          fetchImpl: async (_url, init) => {
+            sent = (init?.headers as Record<string, string>).Authorization ?? '';
+            return json(exportBody(sampleStock()));
+          },
+        }),
+      );
+      expect((await gw.callTool('stock_overview', {})).isError, password).toBeUndefined();
+      expect(sent, password).toBe(`Basic ${Buffer.from(`${USERNAME}:${password}`, 'utf8').toString('base64')}`);
+    }
   });
 });
 
-describe('failure texts', () => {
-  it('replaces texts in failure lists of a successful answer, for reads and writes', async () => {
-    const gw = createExampleGateway({
-      apiKey: PLAIN,
-      baseUrl: BASE,
-      maxAttempts: 1,
-      policy: { enableWrites: true },
-      fetchImpl: async () => json({ data: { failures: ['Vendor diagnostic'], errors: ['Vendor diagnostic'] } }),
-    });
-    for (const result of [await gw.callTool('get_item', { itemId: 'x' }), await gw.callTool('create_item', { name: 'n' })]) {
-      expect(JSON.stringify(result)).not.toContain('Vendor');
-      expect(result.structuredContent).toMatchObject({
-        data: { failures: [{ message: 'Example API request failed.' }], errors: [{ message: 'Example API request failed.' }] },
-      });
+describe('answers in another form', () => {
+  it('passes on only the documented list: any other successful answer is refused with our own text', async () => {
+    for (const body of [
+      { data: { failures: ['Vendor diagnostic'], errors: ['Vendor diagnostic'] } },
+      { Message: 'Vendor diagnostic' },
+      { Vehicles: 'Vendor diagnostic' },
+      ['Vendor diagnostic'],
+    ]) {
+      const gw = createBilinfoGateway(gatewayOptions({ password: PLAIN, maxAttempts: 1, fetchImpl: async () => json(body) }));
+      for (const result of [
+        await gw.callTool('list_vehicles', {}),
+        await gw.callTool('get_vehicle', { vehicleId: listingId(1) }),
+        await gw.callTool('stock_overview', {}),
+      ]) {
+        expect(result.isError).toBe(true);
+        expect(result.content[0]?.text).toBe(UNEXPECTED_ANSWER);
+        expect(JSON.stringify(result)).not.toContain('Vendor');
+      }
     }
   });
 });
 
-describe('round 8', () => {
-  it('throws construction errors in final form: no frames or paths in the stack, no cause', () => {
-    for (const [apiKey, baseUrl] of [
+describe('construction errors', () => {
+  it('are thrown in final form: no frames or paths in the stack, no cause', () => {
+    for (const [password, baseUrl] of [
       ['scratchpadQz7pX2vK9mWb', ''],
       ['scratchpadQz7pX2vK9mWb', 'bad'],
       ['Zq7pX2-node:i-Wb4TnR', 'bad'],
@@ -134,50 +180,51 @@ describe('round 8', () => {
     ] as const) {
       let caught: Error | undefined;
       try {
-        createExampleGateway({ apiKey, baseUrl });
+        createBilinfoGateway(gatewayOptions({ password, baseUrl }));
       } catch (error) {
         caught = error as Error;
       }
-      expect(caught, apiKey).toBeInstanceOf(Error);
+      expect(caught, password).toBeInstanceOf(Error);
       const stack = String(caught!.stack);
       expect(stack).toBe(`${caught!.name}: ${caught!.message}`);
       expect(stack).not.toMatch(/\n\s+at /);
       expect((caught as { cause?: unknown }).cause).toBeUndefined();
-      expect(leaked(apiKey, [stack, caught!.message, caught!.name, caught])).toEqual([]);
+      expect(leaked(password, [stack, caught!.message, caught!.name, caught])).toEqual([]);
     }
   });
 
-  it('reduces every element of a failure list, whatever its fields, also below a wrapper', async () => {
-    for (const body of [
-      { data: { failures: [{ reason: 'Vendor diagnostic' }], errors: [{ code: 'Vendor diagnostic' }] } },
-      { failures: [{ code: 'Vendor diagnostic' }] },
-    ]) {
-      const gw = createExampleGateway({
-        apiKey: PLAIN,
-        baseUrl: BASE,
-        maxAttempts: 1,
-        policy: { enableWrites: true },
-        fetchImpl: async () => json(body),
-      });
-      for (const result of [await gw.callTool('get_item', { itemId: 'x' }), await gw.callTool('create_item', { name: 'n' })]) {
-        expect(JSON.stringify(result)).not.toContain('Vendor');
-        expect(JSON.stringify(result.structuredContent)).toContain('"message":"Example API request failed."');
+  it('never quote the user name or the password, whatever is wrong with them', () => {
+    for (const [username, password] of [
+      ['fjordby:test', PLAIN],
+      ['', PLAIN],
+    ] as const) {
+      let message = '';
+      try {
+        createBilinfoGateway(gatewayOptions({ username, password }));
+      } catch (error) {
+        message = String((error as Error).stack);
       }
+      expect(message).not.toBe('');
+      expect(message).not.toContain('fjordby');
+      expect(leaked(password, [message])).toEqual([]);
     }
   });
+});
 
+describe('addresses', () => {
   it('quotes no configured address in network, timeout or redirect errors', async () => {
-    const ADDRESS = 'https://api.vendor-name.invalid/v1';
+    const ADDRESS = 'https://api.vendor-name.invalid/listingapi';
     for (const fetchImpl of [
       async () => {
         throw new TypeError('fetch failed', { cause: Object.assign(new Error('x'), { code: 'ENOTFOUND' }) });
       },
       async () => new Response(null, { status: 302, headers: { location: 'https://elsewhere.invalid/' } }),
     ] as Array<typeof fetch>) {
-      const gw = createExampleGateway({ apiKey: PLAIN, baseUrl: ADDRESS, allowCustomBaseUrl: true, maxAttempts: 1, fetchImpl });
-      const result = await gw.callTool('get_item', { itemId: 'x' });
+      const gw = createBilinfoGateway(gatewayOptions({ password: PLAIN, baseUrl: ADDRESS, allowCustomBaseUrl: true, maxAttempts: 1, fetchImpl }));
+      const result = await gw.callTool('stock_overview', {});
       expect(result.isError).toBe(true);
       expect(JSON.stringify(result)).not.toContain('vendor-name');
+      expect(JSON.stringify(result)).not.toContain('elsewhere');
     }
   });
 });

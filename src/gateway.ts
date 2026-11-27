@@ -1,51 +1,59 @@
 import { z } from 'zod/v4';
-import { UNTRUSTED_CONTENT_NOTE } from './example/annotations.js';
-import { ExampleClient, type ExampleClientOptions } from './example/client.js';
+import { da } from 'zod/v4/locales';
+import { UNTRUSTED_CONTENT_NOTE } from './bilinfo/annotations.js';
+import { basicCredentials, BilinfoClient, type BilinfoClientOptions } from './bilinfo/client.js';
 import {
   isToolDisabled,
   resolveInstancePolicy,
   runInCallScope,
   TOOL_PREFIX,
   type InstancePolicy,
-} from './example/policy.js';
+} from './bilinfo/policy.js';
 import { ActAsRefusedError, actAsRefusalInForm, normaliseActAs, type ActAs, type ActAsRefusal } from './act-as.js';
 import { ConfigError } from './config-env.js';
 import { failureMetadata, formatUnknownError, redactDeep, SecretRedactor, vendorRequestId, type FailureMetadata } from './errors.js';
-import { fixedOutputs, withheldResult } from './fallbacks.js';
-import { admitsKey, keyRefusedText, leaksSecret, sealedError } from './key-admission.js';
+import { withheldResult } from './fallbacks.js';
+import { leaksSecret, sealedError } from './secrets.js';
 import {
   auditRejectedCall,
-  EXAMPLE_TOOLS,
+  BILINFO_TOOLS,
   executeTool,
   findTool,
   validateStartupConfig,
   type CallContext,
   type ToolDefinition,
   type UpstreamOperation,
-} from './tools/example.js';
+} from './tools/bilinfo.js';
 
 /**
  * Embeddable entry point (package export `./gateway`): an embedding host,
  * such as an MCP gateway that does its own per-user authorization, lists
  * `tools` and invokes `callTool`. Tool definitions, input validation,
  * instance policy and audit are shared with the MCP server in
- * src/tools/example.ts.
+ * src/tools/bilinfo.ts.
  *
- * Several gateway instances (for example one per tenant) can run in one
- * process. Each instance uses only the credentials passed to
- * createExampleGateway (never EXAMPLE_API_KEY or EXAMPLE_BASE_URL from the
- * environment) and redacts errors with its own secrets only.
+ * Several gateway instances (one per dealer, say) can run in one process.
+ * Each instance uses only the credentials passed to createBilinfoGateway
+ * (never BILINFO_USERNAME, BILINFO_PASSWORD, BILINFO_CLIENT_ID,
+ * BILINFO_CLIENT_SECRET, BILINFO_SUBSCRIPTION_KEY, BILINFO_DEALER_ID,
+ * BILINFO_ENVIRONMENT or BILINFO_BASE_URL from the environment) and redacts
+ * errors with its own secrets only.
+ *
+ * Nothing Bilinfo answers is kept: each call reads from Bilinfo and hands
+ * the answer to the host.
  *
  * Instance policy (writes, disabled tools, audit) comes from the host when it
- * passes `policy`: that instance then reads none of EXAMPLE_ENABLE_WRITES,
- * EXAMPLE_DISABLED_TOOLS, EXAMPLE_AUDIT_LOG or EXAMPLE_ALLOW_CUSTOM_BASE_URL,
+ * passes `policy`: that instance then reads none of BILINFO_ENABLE_WRITES,
+ * BILINFO_DISABLED_TOOLS, BILINFO_AUDIT_LOG or BILINFO_ALLOW_CUSTOM_BASE_URL,
  * so two tenants in one process can have different settings. Without
  * `policy` the instance uses the environment, as the MCP server does. Limits
  * (timeouts, retries) are still read from the environment and apply to every
  * instance.
  */
 
-export type { AuditSink, InstancePolicy } from './example/policy.js';
+export type { AuditSink, InstancePolicy } from './bilinfo/policy.js';
+/** Our Danish sentence for each of Bilinfo's operation statuses (a car saved or sold), by its number. */
+export { OPERATION_TEXTS as BILINFO_OPERATION_TEXTS } from './bilinfo/cars.js';
 export { ACT_AS_REFUSALS, ACT_AS_TEXTS } from './act-as.js';
 
 /** The person a call is made for (CallContext.actAs; see src/act-as.ts). */
@@ -118,11 +126,15 @@ export interface GatewayToolCatalogEntry {
   readonly broad: boolean;
 }
 
-export interface ExampleGatewayOptions extends Omit<ExampleClientOptions, 'apiKey' | 'baseUrl' | 'credentialEnv'> {
-  /** API key of this instance. Required; never read from the environment. */
-  apiKey: string;
-  /** API base URL of this instance. Required; never read from the environment. */
-  baseUrl: string;
+export interface BilinfoGatewayOptions extends Omit<BilinfoClientOptions, 'credentialEnv'> {
+  // At least one pair is required, and nothing is read from the environment:
+  // - username and password: the Bilinfo API account of the Listing API (the dealer's vehicles for sale);
+  // - clientId and clientSecret: the client registered with Bilinfo's authorization service (Car API, Leads API and
+  //   Model Catalog: creating, changing and selling cars, leads, model lookups).
+  // They are used exactly as given: nothing is trimmed, and no value is refused for its length or its characters.
+  // subscriptionKey, dealerId, environment and baseUrl are optional (BilinfoClientOptions): without dealerId the instance
+  // reads every vehicle and lead of the account and cannot change a car, and without baseUrl it uses the Listing API's
+  // address in the environment.
   /**
    * Instance policy from the host. When given, the instance reads no policy
    * or audit variables from the environment (see InstancePolicy). A host
@@ -173,94 +185,101 @@ function deepFreeze<T>(value: T): T {
 }
 
 /** All tools, as gateway definitions (names without the prefix). */
-export const exampleGatewayTools: GatewayToolDefinition[] = EXAMPLE_TOOLS.map(toGatewayDefinition);
+export const bilinfoGatewayTools: GatewayToolDefinition[] = BILINFO_TOOLS.map(toGatewayDefinition);
 
 /**
  * The tool catalog: every tool with its gateway definition and the upstream
  * requests it may make. Generated from the same tool table as the MCP server
- * and `exampleGatewayTools`, and deeply frozen. Hosts can use it to build
+ * and `bilinfoGatewayTools`, and deeply frozen. Hosts can use it to build
  * their own permission model without creating a gateway instance.
  */
-export const exampleToolCatalog: readonly GatewayToolCatalogEntry[] = deepFreeze(
-  EXAMPLE_TOOLS.map(tool => ({
+export const bilinfoToolCatalog: readonly GatewayToolCatalogEntry[] = deepFreeze(
+  BILINFO_TOOLS.map(tool => ({
     ...toGatewayDefinition(tool),
     upstream: tool.upstream.map(operation => ({ ...operation })),
     broad: tool.broad === true,
   })),
 );
 
-function requiredCredential(options: ExampleGatewayOptions, name: 'apiKey' | 'baseUrl'): string {
-  const value: unknown = (options as Partial<ExampleGatewayOptions> | undefined)?.[name];
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new ConfigError(
-      `createExampleGateway requires options.${name}. Embedded instances do not read credentials from the environment.`,
-    );
+/** What a gateway that could not be created says when its own error text cannot be shown. */
+const GATEWAY_NOT_CREATED = 'The Bilinfo gateway could not be created.';
+
+type CredentialPair = { name: string; secret: string };
+
+/**
+ * One pair of credentials as the host gave it: both parts, or neither. Used exactly as given. The only thing
+ * asked of a value is that it is there: its length and its characters are Bilinfo's business.
+ */
+function credentialPair(
+  options: BilinfoGatewayOptions,
+  nameKey: 'username' | 'clientId',
+  secretKey: 'password' | 'clientSecret',
+): CredentialPair | undefined {
+  const given = (options ?? {}) as Record<string, unknown>;
+  const name = given[nameKey];
+  const secret = given[secretKey];
+  if (name === undefined && secret === undefined) return undefined;
+  if (typeof name !== 'string' || name === '' || typeof secret !== 'string' || secret === '') {
+    throw new ConfigError(`createBilinfoGateway requires options.${nameKey} and options.${secretKey} together.`);
   }
-  // Key admission (src/key-admission.ts): printable ASCII of 16 characters or more, sharing no piece with any text of
-  // ours. Checked before anything is built from the key; the refusal is a fixed text that holds no piece of it.
-  if (name === 'apiKey' && !admitsKey(value.trim())) {
-    throw new ConfigError(keyRefusedText(value.trim()));
-  }
-  return value.trim();
+  return { name, secret };
 }
 
 /**
- * Create one gateway instance. `apiKey` and `baseUrl` are required and
- * are the only credentials the instance uses; a missing value fails here.
+ * Create one gateway instance from the credentials the host passes: the
+ * Listing API account (`username`, `password`), the client of the other
+ * services (`clientId`, `clientSecret`), or both. At least one pair is
+ * required; a missing one fails here. No credential is refused for its form
+ * (src/secrets.ts).
  */
-export function createExampleGateway(options: ExampleGatewayOptions) {
-  let apiKey: string | undefined;
-  let guard: SecretRedactor | undefined;
-  // What the host gave, admitted or not: every error is masked against it.
-  const given: unknown = (options as Partial<ExampleGatewayOptions> | undefined)?.apiKey;
-  const secrets = typeof given === 'string' ? [given, given.trim()] : [];
+export function createBilinfoGateway(options: BilinfoGatewayOptions) {
+  // What the host gave and what is built from it: every error is masked against them.
+  const secrets: string[] = [];
+  for (const key of ['password', 'clientSecret', 'subscriptionKey'] as const) {
+    const given: unknown = (options as Partial<BilinfoGatewayOptions> | undefined)?.[key];
+    if (typeof given === 'string') secrets.push(given);
+  }
+  const guard = new SecretRedactor();
+  for (const secret of secrets) guard.addSecret(secret);
   try {
-    // Admission first, before a redactor is built from the key.
-    apiKey = requiredCredential(options, 'apiKey');
-    guard = new SecretRedactor().addSecret(apiKey);
-    // The fixed outputs of the sink check (src/fallbacks.ts) must hold no piece of the key.
-    if (leaksSecret(fixedOutputs(), guard)) {
-      throw new ConfigError(keyRefusedText(apiKey));
+    const pairs = [credentialPair(options, 'username', 'password'), credentialPair(options, 'clientId', 'clientSecret')];
+    if (pairs.every(pair => pair === undefined)) {
+      throw new ConfigError(
+        'createBilinfoGateway requires options.username and options.password (the Listing API), options.clientId and ' +
+          'options.clientSecret (cars, leads and the model catalog), or both. Embedded instances do not read credentials from the environment.',
+      );
     }
-    const gateway = buildGateway(options, apiKey);
-    // The tool list leaves the gateway as it is: a key that shares a piece with it is refused.
-    if (leaksSecret(gateway.tools, guard)) {
-      throw new ConfigError(keyRefusedText(apiKey));
+    for (const pair of pairs) {
+      if (!pair) continue;
+      // What is sent is the encoded form of the pair: a secret of the instance like the password itself.
+      const encoded = basicCredentials(pair.name, pair.secret);
+      secrets.push(encoded);
+      guard.addSecret(encoded);
     }
-    return gateway;
+    return buildGateway(options);
   } catch (error) {
-    const raw = error instanceof Error ? error.message : String(error);
-    let message = raw;
-    if (guard && apiKey !== undefined) {
-      // Redacted, then checked whole as the very last step: a message that still holds a piece of the key becomes
-      // the fixed refusal.
-      message = guard.redact(raw);
-      if (leaksSecret(message, guard)) message = keyRefusedText(apiKey);
-    }
-    // A fresh error in final form (src/key-admission.ts, sealedError): no cause, a stack without frames, and name,
-    // message and stack masked against the key. Then the sink check on the finished object.
+    // Redacted, then built as a fresh error in final form (src/secrets.ts, sealedError): no cause, a stack without
+    // frames, and name, message and stack masked against the secrets. Then the sink check on the finished object.
+    const message = guard.redact(error instanceof Error ? error.message : String(error));
     const final = sealedError(error instanceof ConfigError ? new ConfigError(message) : new Error(message), ...secrets);
-    if (guard && apiKey !== undefined && leaksSecret(final, guard)) {
-      throw sealedError(new ConfigError(keyRefusedText(apiKey)), ...secrets);
+    if (leaksSecret(final, guard)) {
+      throw sealedError(new ConfigError(GATEWAY_NOT_CREATED), ...secrets);
     }
     throw final;
   }
 }
 
-function buildGateway(options: ExampleGatewayOptions, apiKey: string) {
-  const baseUrl = requiredCredential(options, 'baseUrl');
+function buildGateway(options: BilinfoGatewayOptions) {
   const { policy: hostPolicy, ...clientOptions } = options;
   const policy =
-    hostPolicy === undefined ? undefined : resolveInstancePolicy(hostPolicy, EXAMPLE_TOOLS.map(tool => tool.name));
+    hostPolicy === undefined ? undefined : resolveInstancePolicy(hostPolicy, BILINFO_TOOLS.map(tool => tool.name));
   if (policy === undefined) {
     // In a scope of its own: a gateway created from inside another instance's call (its audit sink or its fetch)
     // validates against the environment, never against that instance's policy.
     runInCallScope({}, () => validateStartupConfig());
   }
-  const client = new ExampleClient({
+  const client = new BilinfoClient({
     ...clientOptions,
-    apiKey,
-    baseUrl,
     credentialEnv: {},
     // Under a host's policy nothing is read from the environment, this switch included.
     ...(policy ? { allowCustomBaseUrl: clientOptions.allowCustomBaseUrl ?? false } : {}),
@@ -272,12 +291,12 @@ function buildGateway(options: ExampleGatewayOptions, apiKey: string) {
     runInCallScope({ ...(policy ? { policy } : {}), redactor, ...(actAs ? { actAs } : {}) }, work);
 
   return {
-    /** Tools enabled on this instance (the policy's or EXAMPLE_DISABLED_TOOLS' disabled tools are left out). */
-    tools: underPolicy(() => exampleGatewayTools.filter(tool => !isToolDisabled(tool.name))),
+    /** Tools enabled on this instance (the policy's or BILINFO_DISABLED_TOOLS' disabled tools are left out). */
+    tools: underPolicy(() => bilinfoGatewayTools.filter(tool => !isToolDisabled(tool.name))),
     callTool(toolName: string, input: GatewayJsonObject = {}, context?: GatewayCallContext): Promise<GatewayToolResult> {
       // The whole result, text and data (keys included, numbers by their string form), with this instance's secrets
-      // redacted: upstream data can echo the key, and so can an error. Redacted first, as data and depth-limited, and
-      // only then copied as JSON, so no key is serialised and no deep value can exhaust the stack.
+      // redacted: upstream data can echo the password, and so can an error. Redacted first, as data and depth-limited, and
+      // only then copied as JSON, so no secret is serialised and no deep value can exhaust the stack.
       // The person to act as, checked before anything else: a malformed one refuses the call, so it never runs as the
       // key's own user by mistake. The refusal goes through the same redaction and sink check as every other result.
       let actAs: Readonly<ActAs> | undefined;
@@ -290,7 +309,7 @@ function buildGateway(options: ExampleGatewayOptions, apiKey: string) {
       return underPolicy(() =>
         (invalid ? Promise.resolve(actAsRefused('invalid')) : runCall(toolName, input, context)).then(
           // A second pass covers what the first one inserted (the depth placeholder). Then the sink check, as the very
-          // last step: a result that holds a piece of the key anywhere, outer fields included, is withheld whole.
+          // last step: a result that still holds a secret anywhere, outer fields included, is withheld whole.
           result => {
             // The data also goes into the text, built from this final, redacted copy, so the sink check covers it.
             const final = withDataInText(
@@ -315,14 +334,15 @@ function buildGateway(options: ExampleGatewayOptions, apiKey: string) {
       const tool = name ? findTool(`${TOOL_PREFIX}${stripPrefix(name)}`) : undefined;
       if (!tool) {
         // Redacted before it is cut short: a cut key would no longer match the redactor.
-        const reason = `Unsupported Example gateway tool: ${redactor.redact(String(toolName)).slice(0, 100)}`;
+        const reason = `Ukendt værktøj: ${redactor.redact(String(toolName)).slice(0, 100)}`;
         await auditRejectedCall(String(toolName), input, reason, context);
         return errorResult(redactor.redact(reason));
       }
 
-      const parsed = tool.inputSchema.safeParse(input ?? {});
+      // The Danish texts for this parse only: the locale is not set for the process, which the host shares.
+      const parsed = tool.inputSchema.safeParse(input ?? {}, { error: DANISH.localeError });
       if (!parsed.success) {
-        const reason = `Invalid input for ${name}: ${z.prettifyError(parsed.error)}`;
+        const reason = `Ugyldigt input til ${name}: ${z.prettifyError(parsed.error)}`;
         await auditRejectedCall(tool.name, input, 'invalid input', context);
         return errorResult(redactor.redact(reason));
       }
@@ -337,13 +357,16 @@ function buildGateway(options: ExampleGatewayOptions, apiKey: string) {
   }
 }
 
+/** zod's Danish texts for invalid input, used per parse. */
+const DANISH = da();
+
 /** A call not made as the person: our fixed text and the refusal, nothing else. */
 function actAsRefused(refusal: ActAsRefusal): GatewayToolResult {
   return { ...errorResult(new ActAsRefusedError(refusal).message), actAsRefused: refusal };
 }
 
-/** One gateway instance, as returned by createExampleGateway. */
-export type ExampleGateway = ReturnType<typeof createExampleGateway>;
+/** One gateway instance, as returned by createBilinfoGateway. */
+export type BilinfoGateway = ReturnType<typeof createBilinfoGateway>;
 
 /** The data as it came; callTool redacts it and only then copies it as JSON. */
 function jsonResult(text: string, structuredContent: unknown): GatewayToolResult {
