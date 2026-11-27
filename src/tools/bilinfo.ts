@@ -23,7 +23,9 @@ import { checkConnection } from '../bilinfo/connection.js';
 import { LEAD_STATUSES, LIST_LEADS_PATH, listLeads, MAX_LEADS, UPDATE_LEAD_PATH, updateLead } from '../bilinfo/leads.js';
 import { DRILL_DOWN_BY_NUMBER_PATH, DRILL_DOWN_PATH, findModel } from '../bilinfo/models.js';
 import { ActAsRefusedError, type ActAs } from '../act-as.js';
-import { formatUnknownError, type SecretRedactor } from '../errors.js';
+import { formatUnknownError, redactDeep, type SecretRedactor } from '../errors.js';
+import { withheldResult } from '../fallbacks.js';
+import { leaksSecret } from '../secrets.js';
 import {
   danishToday,
   DEFAULT_PAGE_SIZE,
@@ -317,9 +319,17 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
       'har købt eller er tabt, og retter kundens kontaktoplysninger, når de angives. Status: New (ny), Contacted ' +
       '(kontaktet), TestDrive (prøvekørsel), Offer (tilbud), Sold (solgt), CaseCreated (sag oprettet), ' +
       'ContractNotePrinted (slutseddel udskrevet), ContractNoteSigned (slutseddel underskrevet), CarDelivered (bil ' +
-      'udleveret) eller LeadLost (tabt). Ændringen sker med det samme i Bilinfo. Henvendelsen slettes aldrig.',
+      'udleveret) eller LeadLost (tabt). Brug id og version fra listen over kundehenvendelser: henvendelsen slås op ' +
+      'først, og den ændres kun, når den er forhandlerens egen og ikke er ændret siden. Ændringen sker med det samme i ' +
+      'Bilinfo. Henvendelsen slettes aldrig.',
     inputShape: {
-      leadId: z.string().trim().min(1).max(100).describe('Henvendelsens id fra listen over kundehenvendelser.'),
+      leadId: guidSchema.describe('Henvendelsens id fra listen over kundehenvendelser.'),
+      version: z
+        .number()
+        .int()
+        .min(1)
+        .max(Number.MAX_SAFE_INTEGER)
+        .describe('Henvendelsens version fra listen over kundehenvendelser. Den viser, at det er forhandlerens egen henvendelse, som den var.'),
       status: z.enum(LEAD_STATUSES).describe('Den nye status.'),
       contact: z
         .strictObject({
@@ -339,7 +349,10 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
     annotations: CHANGE_TOOL_ANNOTATIONS,
     returnsUpstreamContent: false,
     summary: 'Kundehenvendelsen er opdateret i Bilinfo.',
-    upstream: [{ access: 'write', method: 'PUT', service: 'leads', path: UPDATE_LEAD_PATH }],
+    upstream: [
+      { access: 'read', method: 'GET', service: 'leads', path: LIST_LEADS_PATH },
+      { access: 'write', method: 'PUT', service: 'leads', path: UPDATE_LEAD_PATH },
+    ],
     handler: async (client, input) => updateLead(client, input),
   }),
   defineTool({
@@ -520,7 +533,10 @@ export function registerTools(server: McpServer, client: RedactingClient): void 
       async (input: Record<string, unknown>) => {
         try {
           // In a scope with this server's redactor, like a gateway call: audit records and context are redacted.
-          return mcpToolResult(tool, await runInCallScope({ redactor: client.redactor }, () => executeTool(tool, client, input)));
+          const data = await runInCallScope({ redactor: client.redactor }, () => executeTool(tool, client, input));
+          // As in the gateway: redacted as data (twice, for what the first pass inserts), then the sink check.
+          const result = mcpToolResult(tool, redactDeep(redactDeep(data, client.redactor), client.redactor));
+          return leaksSecret(result, client.redactor) ? withheldResult() : result;
         } catch (error) {
           // Central redaction with this instance's secrets: no error text reaches the client unredacted.
           return {

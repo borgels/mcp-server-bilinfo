@@ -173,6 +173,8 @@ export const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const MAX_RESPONSE_BYTES_LIMIT = 100 * 1024 * 1024;
 
 const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+/** How many of the latest access tokens an instance redacts: far more than run at once, and each lives minutes. */
+const MAX_REDACTED_TOKENS = 64;
 /** Largest delay accepted by Node timers. */
 const MAX_TIMER_MS = 2_147_483_647;
 /** Error codes (on `error.cause`) of connection-level failures worth retrying. */
@@ -278,6 +280,8 @@ export class BilinfoClient implements UpstreamClient {
   private readonly clientCredentials?: string;
   /** The API gateway's subscription key, when the instance was given one. */
   private readonly subscriptionKey?: string;
+  /** The access tokens issued to this instance most recently, oldest first: redacted while they can be in use. */
+  private readonly issuedTokens: string[] = [];
   readonly dealerId?: string;
   readonly baseUrl: string;
   private readonly urls: Readonly<Record<BilinfoService, string>>;
@@ -425,6 +429,14 @@ export class BilinfoClient implements UpstreamClient {
     const token = answer !== null && typeof answer === 'object' ? (answer as { access_token?: unknown }).access_token : undefined;
     if (typeof token !== 'string' || token === '') {
       throw new Error(TOKEN_UNREADABLE);
+    }
+    // A token is a secret of the instance as long as it can be in use: an answer, an error or a result that echoes it
+    // is redacted. The token itself is not kept for another request; only the redactor remembers the last few.
+    this.redactor.addSecret(token);
+    this.issuedTokens.push(token);
+    while (this.issuedTokens.length > MAX_REDACTED_TOKENS) {
+      const old = this.issuedTokens.shift();
+      if (old !== undefined && !this.issuedTokens.includes(old)) this.redactor.forgetSecret(old);
     }
     return token;
   }

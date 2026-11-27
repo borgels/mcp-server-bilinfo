@@ -67,6 +67,18 @@ export class SecretRedactor {
     return this;
   }
 
+  /** Stop looking for a value added with addSecret (in all its forms). */
+  forgetSecret(value: string): this {
+    this.secrets.delete(value);
+    this.secrets.delete(JSON.stringify(value).slice(1, -1));
+    try {
+      this.secrets.delete(encodeURIComponent(value));
+    } catch {
+      // A value with half a surrogate pair has no URL-encoded form.
+    }
+    return this;
+  }
+
   /** Redact the value of this header wherever it appears as `<name>: <value>` or `<name>=<value>`. */
   addHeader(name: string): this {
     const pattern = headerPattern(name);

@@ -20,7 +20,8 @@
   as its status number and our own Danish sentence, never Bilinfo's message.
 - Leads API: `bilinfo_list_leads` reads the dealer's leads from Bilbasen,
   Bilinfo and DBA by version; `bilinfo_update_lead` sets a lead's status and,
-  when given, the customer's contact details.
+  when given, the customer's contact details, after reading the lead by its
+  version and finding it to be the dealer's own and unchanged.
 - Model Catalog: `bilinfo_find_model` looks a car up by registration number,
   VIN, or make, model, year and fuel, for the variant id a car needs.
 - `bilinfo_check_connection` says which parts of Bilinfo the connection
@@ -35,6 +36,9 @@
   and Model Catalog.
 - Nothing is stored: every tool call asks Bilinfo and passes the answer on.
   No answer is kept between calls, and neither is the access token.
+- Access tokens are redacted while they can be in use, and the standalone
+  MCP server redacts its results and withholds one that still holds a
+  secret, as the gateway does.
 - No credential is refused for its form: any length, with spaces, with æ, ø
   and å, or with words that also stand in the server's own texts. Secrets
   that can be told from ordinary text are redacted as whole values and

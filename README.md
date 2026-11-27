@@ -23,7 +23,7 @@ A [Model Context Protocol](https://modelcontextprotocol.io) server for Bilinfo, 
 | `bilinfo_find_model` | Bilinfo's model catalog: the variants that fit a registration number or VIN, or a make, model, year and fuel, with the variant id a car needs. |
 | `bilinfo_list_car_options` | One of the lists whose ids a car uses: colours, upholstery, upholstery colours or extra equipment. |
 | `bilinfo_list_leads` | The dealer's leads from Bilbasen, Bilinfo and DBA: the customer, the car, the message and when it came. Oldest first, at most 200 at a time, paged by version. |
-| `bilinfo_update_lead` | **Change.** Sets a lead's status (contacted, test drive, offer, sold, lost, ...) and, when given, the customer's contact details. |
+| `bilinfo_update_lead` | **Change.** Sets a lead's status (contacted, test drive, offer, sold, lost, ...) and, when given, the customer's contact details. Takes the lead's id and version from the list: the lead is read first and changed only when it is the instance's dealer's and has not changed since. |
 | `bilinfo_save_car` | **Change.** Creates a car for the dealer, or changes one this connection created: prices (cash, without tax, leasing), mileage, description, equipment, pictures, status and visibility. Visibility `Internal` takes the ad off Bilbasen and DBA and keeps the car in Bilinfo. |
 | `bilinfo_mark_car_sold` | **Change.** Marks a car this connection created as sold: Bilinfo removes it from Bilbasen and keeps it with its history. |
 
@@ -41,9 +41,10 @@ Bilinfo's developer portal ([developer.bilinfo.net](https://developer.bilinfo.ne
 
 How the Car API works, and what follows:
 
-- **The whole car each time.** Bilinfo sets a car to exactly what the last request holds. A change therefore sends every field again, not only the one that changes, with a version number higher than the last. Without a version the server uses the time in whole seconds, which only grows.
+- **The whole car each time.** Bilinfo sets a car to exactly what the last request holds. A change therefore sends every field again, not only the one that changes, with a version number higher than the last.
 - **Only cars this connection created.** The Car API changes the cars an integration created; a car created directly in Bilinfo cannot be changed through it (Bilinfo's status 73). Bilinfo can link to such a car with the integration's id and `carId`.
-- **The answer is a status number.** Bilinfo answers a change with a number from a fixed list (10 received, 20 being processed, 30 done, 40 and above refused, with the reason) and a message in its own words. The server passes on the number and its own Danish sentence for it, never the message.
+- **The answer is a status number.** Bilinfo answers a change with a number from a fixed list (10 received, 20 being processed, 30 done, 40 and above refused, with the reason) and a message in its own words. The server passes on its own Danish sentence for the number, and the number when it is in its own table; never the message, and never a number it does not know.
+- **Versions only grow.** Without a version from the caller, a car upload gets the time in whole seconds, and always more than the last version the process sent.
 - **Ad off, not deleted.** `visibility: Internal` keeps the car in Bilinfo and takes it off Bilbasen and DBA. Marking a car as sold removes it from Bilbasen, and Bilinfo keeps it.
 
 How the vehicle tools follow from the Listing API:

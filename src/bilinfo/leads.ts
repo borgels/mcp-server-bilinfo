@@ -43,8 +43,10 @@ export type LeadStatus = (typeof LEAD_STATUSES)[number];
 /** Most leads per request, as the Leads API allows. */
 export const MAX_LEADS = 200;
 
-/** In Danish: the person who asked reads it. */
+/** In Danish: the person who asked reads them. */
 export const LEADS_UNREADABLE = 'Bilinfo svarede i en form, der ikke kan læses som en liste af kundehenvendelser.';
+export const LEAD_NOT_FOUND =
+  'Kundehenvendelsen blev ikke fundet med den version, eller den hører til en anden forhandler. Den kan være ændret, siden listen blev hentet: hent kundehenvendelserne igen, og brug id og version derfra. Intet blev ændret.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -93,11 +95,36 @@ export interface LeadContact {
   city?: string;
 }
 
-/** Set a lead's status, and the customer's contact details when given. Sent once. */
+/**
+ * The lead with this id and version, read from the Leads API before a change: the leads above version - 1 begin with
+ * the one that has this version, as long as it has not changed since. It must be the lead with this id, and the
+ * instance's dealer's when the instance has one. Otherwise nothing is changed.
+ */
+async function assertOwnLead(client: UpstreamClient, leadId: string, version: number): Promise<void> {
+  const answer = await client.get<unknown>(LIST_LEADS_PATH, { version: version - 1, count: 1 }, LEADS_READ);
+  const leads = isRecord(answer) ? answer.leads : undefined;
+  if (!Array.isArray(leads)) {
+    throw new Error(LEADS_UNREADABLE);
+  }
+  const [lead] = leads;
+  const id = isRecord(lead) && typeof lead.id === 'string' ? lead.id.toLowerCase() : undefined;
+  const dealer = isRecord(lead) && typeof lead.dealerId === 'string' ? lead.dealerId.toLowerCase() : undefined;
+  if (
+    !isRecord(lead) ||
+    id !== leadId.toLowerCase() ||
+    lead.version !== version ||
+    (client.dealerId !== undefined && dealer !== client.dealerId)
+  ) {
+    throw new Error(LEAD_NOT_FOUND);
+  }
+}
+
+/** Set a lead's status, and the customer's contact details when given. Sent once, after the lead is checked. */
 export async function updateLead(
   client: UpstreamClient,
-  input: { leadId: string; status: LeadStatus; contact?: LeadContact },
+  input: { leadId: string; version: number; status: LeadStatus; contact?: LeadContact },
 ) {
+  await assertOwnLead(client, input.leadId, input.version);
   const body: Record<string, unknown> = { status: input.status };
   if (input.contact) {
     const { address, zipCode, city, ...person } = input.contact;

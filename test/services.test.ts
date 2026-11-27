@@ -3,9 +3,9 @@
 // the Model Catalog. Everything is answered by a stand-in: no request leaves the test, and every value is invented.
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
-import { CARS_READ, CARS_WRITE, OPERATION_TEXTS } from '../src/bilinfo/cars.js';
+import { CARS_READ, CARS_WRITE, nextVersion, OPERATION_REFUSED, OPERATION_TEXTS } from '../src/bilinfo/cars.js';
 import { BilinfoClient, SERVICE_URLS, SUBSCRIPTION_KEY_HEADER, UPSTREAM_HOST_SUFFIXES } from '../src/bilinfo/client.js';
-import { LEADS_READ, LEADS_WRITE } from '../src/bilinfo/leads.js';
+import { LEAD_NOT_FOUND, LEADS_READ, LEADS_WRITE } from '../src/bilinfo/leads.js';
 import { MODELS_DRILL_DOWN } from '../src/bilinfo/models.js';
 import { createBilinfoGateway } from '../src/gateway.js';
 import {
@@ -98,7 +98,7 @@ describe('the access token', () => {
     const { gw, fetchImpl } = gatewayWith(
       {
         [`GET ${COLORS_URL}`]: { body: [] },
-        [`GET ${LEADS_URL}`]: { body: { leads: [] } },
+        [`GET ${LEADS_URL}`]: { body: { leads: [{ ...lead(1), id: LEAD_ID, version: 5 }] } },
         [`GET ${BY_NUMBER_URL}`]: { body: { variants: [] } },
         [`POST ${SAVE_URL}`]: { body: operation(30) },
         [`PUT ${LEAD_URL}`]: { body: {} },
@@ -110,11 +110,26 @@ describe('the access token', () => {
     await gw.callTool('list_leads', {});
     await gw.callTool('find_model', { number: 'AB12345' });
     await gw.callTool('save_car', CAR);
-    await gw.callTool('update_lead', { leadId: LEAD_ID, status: 'Contacted' });
+    await gw.callTool('update_lead', { leadId: LEAD_ID, version: 5, status: 'Contacted' });
     const scopes = callsOf(fetchImpl)
       .filter(([url]) => url === SERVICES.token)
       .map(([, init]) => new URLSearchParams(String(init.body)).get('scope'));
-    expect(scopes).toEqual([CARS_READ.scope, CARS_READ.scope, LEADS_READ.scope, MODELS_DRILL_DOWN.scope, CARS_WRITE.scope, LEADS_WRITE.scope]);
+    expect(scopes).toEqual([
+      CARS_READ.scope,
+      CARS_READ.scope,
+      LEADS_READ.scope,
+      MODELS_DRILL_DOWN.scope,
+      CARS_WRITE.scope,
+      LEADS_READ.scope,
+      LEADS_WRITE.scope,
+    ]);
+  });
+
+  it('is redacted while it can be in use: an answer that echoes it does not pass it on', async () => {
+    const { gw } = gatewayWith({ [`GET ${LEADS_URL}`]: { body: { leads: [{ ...lead(1), customer: { firstName: `Kode ${ACCESS_TOKEN}` } }] } } });
+    const result = await gw.callTool('list_leads', {});
+    expect(result.isError).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain(ACCESS_TOKEN);
   });
 
   it('says in Danish when Bilinfo will not issue one, without the vendor text, and makes no further request', async () => {
@@ -241,24 +256,31 @@ describe('a car', () => {
       expect(records[0]).toMatchObject({ tool: 'bilinfo_save_car', caller: 'person-1', requestId: 'r1' });
       expect(JSON.stringify(records)).not.toContain('Velholdt');
 
-      // A version given by the caller is used as it is.
-      await gw.callTool('save_car', { ...CAR, version: 7 });
-      expect(JSON.parse(String(callsOf(fetchImpl)[3]?.[1].body)).version).toBe(7);
+      // A second save in the same second gets a higher version.
+      await gw.callTool('save_car', CAR);
+      expect(JSON.parse(String(callsOf(fetchImpl)[3]?.[1].body)).version).toBe(version + 1);
+      // A version given by the caller is used as it is, and the next one made here is above it.
+      await gw.callTool('save_car', { ...CAR, version: version + 100 });
+      expect(JSON.parse(String(callsOf(fetchImpl)[5]?.[1].body)).version).toBe(version + 100);
+      expect(nextVersion()).toBe(version + 101);
     } finally {
       vi.useRealTimers();
     }
   });
 
   it('is refused in our own words when Bilinfo answers with a status that means it was not made', async () => {
-    for (const status of [41, 64, 73, 78, 99]) {
+    for (const status of [41, 64, 73, 78]) {
       const { gw } = gatewayWith({ [`POST ${SAVE_URL}`]: { body: operation(status) } }, { policy: { enableWrites: true } });
       const result = await gw.callTool('save_car', CAR);
       expect(result.isError, String(status)).toBe(true);
       const text = texts(result).join(' ');
-      expect(text).toContain(`Bilinfos kode ${status}`);
-      if (OPERATION_TEXTS[status]) expect(text).toContain(OPERATION_TEXTS[status]);
+      expect(text).toContain(`${OPERATION_TEXTS[status]} (Bilinfos kode ${status})`);
       expect(text).not.toContain('tekst fra Bilinfo');
     }
+    // A number that is not in our own table is not passed on.
+    const unknown = gatewayWith({ [`POST ${SAVE_URL}`]: { body: operation(99) } }, { policy: { enableWrites: true } });
+    const refused = await unknown.gw.callTool('save_car', CAR);
+    expect(texts(refused).join(' ')).toBe(OPERATION_REFUSED);
     const odd = gatewayWith({ [`POST ${SAVE_URL}`]: { body: { message: 'noget andet' } } }, { policy: { enableWrites: true } });
     const unreadable = await odd.gw.callTool('save_car', CAR);
     expect(unreadable.isError).toBe(true);
@@ -391,24 +413,29 @@ describe('the leads', () => {
     expect((await gw.callTool('list_leads', { count: 201 })).isError).toBe(true);
   });
 
-  it('get a new status once, with the contact details only when given', async () => {
+  it("get a new status once, after the lead is read and found to be the dealer's own, unchanged", async () => {
     const records: Array<Record<string, unknown>> = [];
+    const own = { ...lead(1), id: LEAD_ID, version: 5 };
     const { gw, fetchImpl } = gatewayWith(
-      { [`PUT ${LEAD_URL}`]: { body: {} } },
+      { [`GET ${LEADS_URL}`]: { body: { leads: [own] } }, [`PUT ${LEAD_URL}`]: { body: {} } },
       { policy: { enableWrites: true, audit: record => void records.push(record) } },
     );
-    const result = await gw.callTool('update_lead', { leadId: LEAD_ID, status: 'TestDrive' });
+    const result = await gw.callTool('update_lead', { leadId: LEAD_ID, version: 5, status: 'TestDrive' });
     expect(result.structuredContent).toEqual({ leadId: LEAD_ID, status: 'TestDrive', contactChanged: false });
-    const [, put] = callsOf(fetchImpl);
+    const [read, put] = notToken(fetchImpl);
+    const asked = new URL(read![0]).searchParams;
+    expect([asked.get('version'), asked.get('count')]).toEqual(['4', '1']);
     expect(put?.[1].method).toBe('PUT');
+    expect(put?.[0]).toBe(LEAD_URL);
     expect(JSON.parse(String(put?.[1].body))).toEqual({ status: 'TestDrive' });
 
     await gw.callTool('update_lead', {
       leadId: LEAD_ID,
+      version: 5,
       status: 'Offer',
       contact: { firstName: 'Test', phone: '00000009', zipCode: 9999, city: 'Fjordby' },
     });
-    expect(JSON.parse(String(callsOf(fetchImpl)[3]?.[1].body))).toEqual({
+    expect(JSON.parse(String(notToken(fetchImpl)[3]?.[1].body))).toEqual({
       status: 'Offer',
       contactInformation: { firstName: 'Test', phone: '00000009', addressInformation: { zipCode: 9999, city: 'Fjordby' } },
     });
@@ -416,11 +443,35 @@ describe('the leads', () => {
     expect(JSON.stringify(records)).toContain(LEAD_ID);
     expect(JSON.stringify(records)).not.toContain('00000009');
 
-    for (const bad of [{ leadId: LEAD_ID, status: 'Deleted' }, { leadId: '../x', status: 'New' }, { leadId: LEAD_ID }]) {
+    for (const bad of [
+      { leadId: LEAD_ID, version: 5, status: 'Deleted' },
+      { leadId: '../x', version: 5, status: 'New' },
+      { leadId: LEAD_ID, status: 'New' },
+      { leadId: LEAD_ID, version: 5 },
+    ]) {
       const refused = await gw.callTool('update_lead', bad as never);
       expect(refused.isError, JSON.stringify(bad)).toBe(true);
     }
-    expect(notToken(fetchImpl)).toHaveLength(2);
+    expect(notToken(fetchImpl)).toHaveLength(4);
+  });
+
+  it("are never changed when the lead is another dealer's, another one, or changed since the list", async () => {
+    for (const answer of [
+      { ...lead(1, NORDKYST.DealerGuid), id: LEAD_ID, version: 5 },
+      { ...lead(2), version: 5 },
+      { ...lead(1), id: LEAD_ID, version: 6 },
+    ]) {
+      const { gw, fetchImpl } = gatewayWith(
+        { [`GET ${LEADS_URL}`]: { body: { leads: [answer] } }, [`PUT ${LEAD_URL}`]: { body: {} } },
+        { policy: { enableWrites: true } },
+      );
+      const result = await gw.callTool('update_lead', { leadId: LEAD_ID, version: 5, status: 'Sold' });
+      expect(result.isError, JSON.stringify(answer)).toBe(true);
+      expect(texts(result).join(' ')).toBe(LEAD_NOT_FOUND);
+      expect(callsOf(fetchImpl).some(([, init]) => init.method === 'PUT')).toBe(false);
+    }
+    const none = gatewayWith({ [`GET ${LEADS_URL}`]: { body: { leads: [] } } }, { policy: { enableWrites: true } });
+    expect(texts(await none.gw.callTool('update_lead', { leadId: LEAD_ID, version: 5, status: 'Sold' })).join(' ')).toBe(LEAD_NOT_FOUND);
   });
 });
 

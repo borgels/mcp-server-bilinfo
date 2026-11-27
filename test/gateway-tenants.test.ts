@@ -281,7 +281,7 @@ const SAMPLE_INPUTS: Record<string, Record<string, unknown>> = {
   find_model: { number: 'AB12345' },
   list_car_options: { kind: 'colors' },
   list_leads: {},
-  update_lead: { leadId: '11111111-2222-4333-8444-555555555555', status: 'Contacted' },
+  update_lead: { leadId: '11111111-2222-4333-8444-555555555555', version: 5, status: 'Contacted' },
   save_car: { carId: 'LAGER-1001', variantId: '0a0a0a0a-1111-4222-8333-444444444444', mileage: 1000, cashPrice: 150000 },
   mark_car_sold: { carId: 'LAGER-1001', soldTo: 'private' },
 };
@@ -295,7 +295,8 @@ const TOOL_ANSWERS: Record<string, unknown> = {
   find_model: { variants: [] },
   list_car_options: [],
   list_leads: { leads: [] },
-  update_lead: {},
+  // The lead is read before it is changed; the same answer serves both requests.
+  update_lead: { leads: [{ id: '11111111-2222-4333-8444-555555555555', dealerId: '0f0f0f0f-aaaa-4bbb-8ccc-000000000001', version: 5 }] },
   save_car: { status: 30 },
   mark_car_sold: { status: 30 },
 };
@@ -384,7 +385,7 @@ describe('tool catalog', () => {
           return { service, method: init.method, path: new URL(url).pathname.slice(new URL(base).pathname.replace(/\/$/, '').length) };
         });
       // The connection check makes one small request per API; every other tool makes one.
-      expect(made, entry.name).toHaveLength(entry.name === 'check_connection' ? 3 : 1);
+      expect(made, entry.name).toHaveLength(entry.name === 'check_connection' ? 3 : entry.name === 'update_lead' ? 2 : 1);
       for (const request of made) {
         expect(declared, `${entry.name} made ${request.method} ${request.path}`).toContainEqual(request);
       }

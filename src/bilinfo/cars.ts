@@ -80,13 +80,20 @@ export const OPERATION_TEXTS: Readonly<Record<number, string>> = Object.freeze({
 
 const ACCEPTED: ReadonlySet<number> = new Set([10, 20, 30]);
 
-/** Thrown when Bilinfo answered a change with a status that means it was not made. Our text and the number only. */
+/** What a refused change says when Bilinfo's status is not one of those in OPERATION_TEXTS. */
+export const OPERATION_REFUSED = 'Bilinfo kunne ikke gennemføre ændringen. Intet blev ændret. Se bilen i Bilinfo.';
+
+/**
+ * Thrown when Bilinfo answered a change with a status that means it was not made: our sentence, and the number only
+ * when it is one of those in our own table. An unknown number is not passed on.
+ */
 export class CarOperationError extends Error {
-  readonly code: number;
-  constructor(code: number) {
-    super(`${OPERATION_TEXTS[code] ?? 'Bilinfo kunne ikke gennemføre ændringen.'} (Bilinfos kode ${code})`);
+  readonly code?: number;
+  constructor(status: number) {
+    const known = Object.prototype.hasOwnProperty.call(OPERATION_TEXTS, status) && !ACCEPTED.has(status);
+    super(known ? `${OPERATION_TEXTS[status]} (Bilinfos kode ${status})` : OPERATION_REFUSED);
     this.name = 'CarOperationError';
-    this.code = code;
+    if (known) this.code = status;
   }
 }
 
@@ -175,12 +182,23 @@ function dateTime(date: string | undefined): string | undefined {
   return date === undefined ? undefined : `${date}T00:00:00`;
 }
 
+/** The highest version this process has sent: the next one made here is above it. */
+let lastVersion = 0;
+
 /**
- * The version of a car upload when the caller gives none: whole seconds since 1970. It only grows, so each upload
- * is newer than the one before it, and it fits Bilinfo's 32-bit number until 2038.
+ * The version of a car upload when the caller gives none: whole seconds since 1970, and always above the last
+ * version this process sent (also within one second, and after a higher version a caller gave). It fits Bilinfo's
+ * 32-bit number until 2038. Two processes saving the same car within one second could still send the same number;
+ * Bilinfo then refuses the second (status 41) and nothing is changed.
  */
-export function defaultVersion(now: number = Date.now()): number {
-  return Math.floor(now / 1000);
+export function nextVersion(now: number = Date.now()): number {
+  lastVersion = Math.max(Math.floor(now / 1000), lastVersion + 1);
+  return lastVersion;
+}
+
+/** Note a version a caller gave, so the next one made here is above it. */
+function noteVersion(version: number): void {
+  lastVersion = Math.max(lastVersion, version);
 }
 
 /** The car as the save tool takes it: the Car API's CarDto, with dates as YYYY-MM-DD and prices as one object. */
@@ -252,7 +270,8 @@ export function carBody(input: SaveCarInput, version: number): Record<string, un
 /** Create a car for the instance's dealer, or change one (the whole car, with a higher version). Sent once. */
 export async function saveCar(client: UpstreamClient, input: SaveCarInput, now: number = Date.now()) {
   const dealerId = dealerOf(client);
-  const version = input.version ?? defaultVersion(now);
+  const version = input.version ?? nextVersion(now);
+  noteVersion(version);
   const answer = await client.post<unknown>(
     `/api/dealers/${encodePathParam(dealerId, 'dealerId')}/cars`,
     carBody(input, version),
