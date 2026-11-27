@@ -182,23 +182,29 @@ function dateTime(date: string | undefined): string | undefined {
   return date === undefined ? undefined : `${date}T00:00:00`;
 }
 
-/** The highest version this process has sent: the next one made here is above it. */
-let lastVersion = 0;
+/** Bilinfo's version is a signed 32-bit number. */
+export const MAX_VERSION = 2_147_483_647;
+
+/** In Danish: the person who asked reads it. */
+export const NO_VERSION_LEFT =
+  'Bilinfo tager ikke et højere versionsnummer end 2147483647. Intet blev sendt; angiv selv et versionsnummer, der er højere end bilens sidste.';
+
+/** The last version each client (one instance, one connection) made itself; never shared between instances. */
+const lastMade = new WeakMap<object, number>();
 
 /**
- * The version of a car upload when the caller gives none: whole seconds since 1970, and always above the last
- * version this process sent (also within one second, and after a higher version a caller gave). It fits Bilinfo's
- * 32-bit number until 2038. Two processes saving the same car within one second could still send the same number;
- * Bilinfo then refuses the second (status 41) and nothing is changed.
+ * The version of a car upload when the caller gives none: whole seconds since 1970, and above the last one this
+ * instance made itself (two saves within one second). A version a caller gives is used as it is and changes nothing
+ * here. It fits Bilinfo's 32-bit number until 2038. Two instances saving the same car within one second can send the
+ * same number; Bilinfo then refuses the second (status 41), and nothing is changed.
  */
-export function nextVersion(now: number = Date.now()): number {
-  lastVersion = Math.max(Math.floor(now / 1000), lastVersion + 1);
-  return lastVersion;
-}
-
-/** Note a version a caller gave, so the next one made here is above it. */
-function noteVersion(version: number): void {
-  lastVersion = Math.max(lastVersion, version);
+export function nextVersion(owner: object, now: number = Date.now()): number {
+  const version = Math.max(Math.floor(now / 1000), (lastMade.get(owner) ?? 0) + 1);
+  if (version > MAX_VERSION) {
+    throw new Error(NO_VERSION_LEFT);
+  }
+  lastMade.set(owner, version);
+  return version;
 }
 
 /** The car as the save tool takes it: the Car API's CarDto, with dates as YYYY-MM-DD and prices as one object. */
@@ -270,8 +276,7 @@ export function carBody(input: SaveCarInput, version: number): Record<string, un
 /** Create a car for the instance's dealer, or change one (the whole car, with a higher version). Sent once. */
 export async function saveCar(client: UpstreamClient, input: SaveCarInput, now: number = Date.now()) {
   const dealerId = dealerOf(client);
-  const version = input.version ?? nextVersion(now);
-  noteVersion(version);
+  const version = input.version ?? nextVersion(client, now);
   const answer = await client.post<unknown>(
     `/api/dealers/${encodePathParam(dealerId, 'dealerId')}/cars`,
     carBody(input, version),

@@ -173,8 +173,11 @@ export const DEFAULT_MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
 const MAX_RESPONSE_BYTES_LIMIT = 100 * 1024 * 1024;
 
 const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
-/** How many of the latest access tokens an instance redacts: far more than run at once, and each lives minutes. */
-const MAX_REDACTED_TOKENS = 64;
+/**
+ * How long an access token is still redacted after the last request that used it ended: the call's result is
+ * redacted right after that, by the gateway or the MCP server. A token is never forgotten while a request uses it.
+ */
+const TOKEN_REDACTION_MARGIN_MS = 5 * 60_000;
 /** Largest delay accepted by Node timers. */
 const MAX_TIMER_MS = 2_147_483_647;
 /** Error codes (on `error.cause`) of connection-level failures worth retrying. */
@@ -280,8 +283,11 @@ export class BilinfoClient implements UpstreamClient {
   private readonly clientCredentials?: string;
   /** The API gateway's subscription key, when the instance was given one. */
   private readonly subscriptionKey?: string;
-  /** The access tokens issued to this instance most recently, oldest first: redacted while they can be in use. */
-  private readonly issuedTokens: string[] = [];
+  /**
+   * The access tokens issued to this instance: how many requests use each right now, and when it may be forgotten
+   * once none does. Redacted while they can be in use.
+   */
+  private readonly issuedTokens: Array<{ token: string; uses: number; forgetAt: number }> = [];
   readonly dealerId?: string;
   readonly baseUrl: string;
   private readonly urls: Readonly<Record<BilinfoService, string>>;
@@ -369,7 +375,7 @@ export class BilinfoClient implements UpstreamClient {
     if (target.scope === undefined) {
       throw new Error('probeToken needs a target with a scope');
     }
-    await this.accessToken(target.scope);
+    await this.issueToken(target.scope);
   }
 
   async post<T>(path: string, body: unknown, target: ApiTarget): Promise<T> {
@@ -394,15 +400,19 @@ export class BilinfoClient implements UpstreamClient {
     return url.toString();
   }
 
-  /** The value of the Authorization header for a target: Basic for the Listing API, else a fresh Bearer token. */
-  private async authorization(target: ApiTarget): Promise<string> {
+  /**
+   * The value of the Authorization header for a target: Basic for the Listing API, else a fresh Bearer token, and the
+   * token's entry, which the request holds while it runs.
+   */
+  private async authorization(target: ApiTarget): Promise<{ header: string; token?: { uses: number; forgetAt: number } }> {
     if (target.scope === undefined) {
       if (!this.credentials) {
         throw new MissingCredentialsError('listing', MISSING_CREDENTIALS);
       }
-      return `Basic ${this.credentials}`;
+      return { header: `Basic ${this.credentials}` };
     }
-    return `Bearer ${await this.accessToken(target.scope)}`;
+    const entry = await this.issueToken(target.scope);
+    return { header: `Bearer ${entry.token}`, token: entry };
   }
 
   /**
@@ -410,7 +420,7 @@ export class BilinfoClient implements UpstreamClient {
    * and secret as HTTP Basic, the grant type and the scope as a form). Asking changes nothing, so it is retried like
    * a read. The token is used for the one request that follows and is not kept.
    */
-  private async accessToken(scope: string): Promise<string> {
+  private async issueToken(scope: string): Promise<{ token: string; uses: number; forgetAt: number }> {
     if (!this.clientCredentials) {
       throw new MissingCredentialsError('client', MISSING_CLIENT);
     }
@@ -430,22 +440,42 @@ export class BilinfoClient implements UpstreamClient {
     if (typeof token !== 'string' || token === '') {
       throw new Error(TOKEN_UNREADABLE);
     }
-    // A token is a secret of the instance as long as it can be in use: an answer, an error or a result that echoes it
-    // is redacted. The token itself is not kept for another request; only the redactor remembers the last few.
-    this.redactor.addSecret(token);
-    this.issuedTokens.push(token);
-    while (this.issuedTokens.length > MAX_REDACTED_TOKENS) {
-      const old = this.issuedTokens.shift();
-      if (old !== undefined && !this.issuedTokens.includes(old)) this.redactor.forgetSecret(old);
+    // A token is a secret of the instance as long as a request can still use it: an answer, an error or a result that
+    // echoes it is redacted. It is forgotten only when no request uses it and the margin after the last one has
+    // passed. The token itself is not kept for another request; only the redactor looks for it.
+    const now = Date.now();
+    for (let i = this.issuedTokens.length - 1; i >= 0; i -= 1) {
+      const old = this.issuedTokens[i]!;
+      if (old.uses === 0 && old.forgetAt <= now) {
+        this.issuedTokens.splice(i, 1);
+        if (!this.issuedTokens.some(other => other.token === old.token)) this.redactor.forgetSecret(old.token);
+      }
     }
-    return token;
+    this.redactor.addSecret(token);
+    const entry = { token, uses: 0, forgetAt: now + TOKEN_REDACTION_MARGIN_MS };
+    this.issuedTokens.push(entry);
+    return entry;
   }
 
   private async request<T>(method: HttpMethod, target: ApiTarget, url: string, body?: unknown): Promise<T> {
+    const authorization = await this.authorization(target);
+    const token = authorization.token;
+    if (token) token.uses += 1;
+    try {
+      return await this.sendWith<T>(method, target, url, authorization.header, body);
+    } finally {
+      if (token) {
+        token.uses -= 1;
+        token.forgetAt = Date.now() + TOKEN_REDACTION_MARGIN_MS;
+      }
+    }
+  }
+
+  private async sendWith<T>(method: HttpMethod, target: ApiTarget, url: string, header: string, body?: unknown): Promise<T> {
     const headers: Record<string, string> = {
       Accept: 'application/json',
       'User-Agent': USER_AGENT,
-      [CREDENTIAL_HEADER]: await this.authorization(target),
+      [CREDENTIAL_HEADER]: header,
     };
     // The API gateway's key goes to the services behind it: never to the Listing API or the token service.
     if (this.subscriptionKey && target.service !== 'listing') {

@@ -3,7 +3,7 @@
 // the Model Catalog. Everything is answered by a stand-in: no request leaves the test, and every value is invented.
 import { Buffer } from 'node:buffer';
 import { describe, expect, it, vi } from 'vitest';
-import { CARS_READ, CARS_WRITE, nextVersion, OPERATION_REFUSED, OPERATION_TEXTS } from '../src/bilinfo/cars.js';
+import { CARS_READ, CARS_WRITE, MAX_VERSION, nextVersion, NO_VERSION_LEFT, OPERATION_REFUSED, OPERATION_TEXTS } from '../src/bilinfo/cars.js';
 import { BilinfoClient, SERVICE_URLS, SUBSCRIPTION_KEY_HEADER, UPSTREAM_HOST_SUFFIXES } from '../src/bilinfo/client.js';
 import { LEAD_NOT_FOUND, LEADS_READ, LEADS_WRITE } from '../src/bilinfo/leads.js';
 import { MODELS_DRILL_DOWN } from '../src/bilinfo/models.js';
@@ -125,11 +125,54 @@ describe('the access token', () => {
     ]);
   });
 
-  it('is redacted while it can be in use: an answer that echoes it does not pass it on', async () => {
+  it('is redacted while it can be in use: an answer that echoes it does not pass it on, after many newer tokens too', async () => {
     const { gw } = gatewayWith({ [`GET ${LEADS_URL}`]: { body: { leads: [{ ...lead(1), customer: { firstName: `Kode ${ACCESS_TOKEN}` } }] } } });
     const result = await gw.callTool('list_leads', {});
     expect(result.isError).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain(ACCESS_TOKEN);
+
+    // One token is issued first; a hundred newer ones do not make the instance forget it while it can be in use.
+    let issued = 0;
+    const first = 'yyyy.forste.token-0099';
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (url === SERVICES.token) {
+        issued += 1;
+        return Response.json({ access_token: issued === 1 ? first : `yyyy.token.nummer-${issued}`, expires_in: 360 });
+      }
+      return Response.json({ leads: [{ ...lead(1), customer: { firstName: `Kode ${first}` } }] });
+    });
+    const many = createBilinfoGateway(fullOptions({ fetchImpl: fetchImpl as unknown as typeof fetch, maxAttempts: 1 }));
+    for (let i = 0; i < 100; i += 1) await many.callTool('list_leads', {});
+    expect(JSON.stringify(await many.callTool('list_leads', {}))).not.toContain(first);
+  });
+
+  it('is not forgotten while a request uses it, however long ago it was issued', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(new Date('2026-11-27T08:00:00Z'));
+      let issued = 0;
+      let release: (() => void) | undefined;
+      const held = 'yyyy.holdt.token-0042';
+      const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === SERVICES.token) {
+          issued += 1;
+          return Response.json({ access_token: issued === 1 ? held : `yyyy.token.senere-${issued}`, expires_in: 360 });
+        }
+        const auth = (init?.headers as Record<string, string>).Authorization;
+        if (auth === `Bearer ${held}`) await new Promise<void>(resolve => (release = resolve));
+        return Response.json({ leads: [{ ...lead(1), customer: { firstName: `Kode ${held}` } }] });
+      });
+      const gw = createBilinfoGateway(fullOptions({ fetchImpl: fetchImpl as unknown as typeof fetch, maxAttempts: 1 }));
+      const slow = gw.callTool('list_leads', {});
+      while (!release) await new Promise(resolve => setImmediate(resolve));
+      // An hour later, newer tokens are issued (and old ones pruned) while the first request still runs.
+      vi.setSystemTime(new Date('2026-11-27T09:00:00Z'));
+      for (let i = 0; i < 5; i += 1) await gw.callTool('list_leads', {});
+      release();
+      expect(JSON.stringify(await slow)).not.toContain(held);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('says in Danish when Bilinfo will not issue one, without the vendor text, and makes no further request', async () => {
@@ -259,10 +302,16 @@ describe('a car', () => {
       // A second save in the same second gets a higher version.
       await gw.callTool('save_car', CAR);
       expect(JSON.parse(String(callsOf(fetchImpl)[3]?.[1].body)).version).toBe(version + 1);
-      // A version given by the caller is used as it is, and the next one made here is above it.
+      // A version given by the caller is used as it is and changes nothing for the next one made here.
       await gw.callTool('save_car', { ...CAR, version: version + 100 });
       expect(JSON.parse(String(callsOf(fetchImpl)[5]?.[1].body)).version).toBe(version + 100);
-      expect(nextVersion()).toBe(version + 101);
+      // Each instance counts for itself: another one starts from the time again.
+      const owner = {};
+      expect(nextVersion(owner)).toBe(version);
+      expect(nextVersion(owner)).toBe(version + 1);
+      expect(nextVersion({})).toBe(version);
+      // Above Bilinfo's 32-bit number nothing is made.
+      expect(() => nextVersion({}, (MAX_VERSION + 1) * 1000)).toThrow(NO_VERSION_LEFT);
     } finally {
       vi.useRealTimers();
     }

@@ -188,6 +188,7 @@ export const FIXED_CORPUS: readonly string[] = [
   "Bilinfo svarede i en form, der ikke kan læses. Det er uvist, om ændringen er modtaget; se bilen i Bilinfo, før den sendes igen.",
   "Bilinfo svarede ikke inden for ",
   "Bilinfo svarede med en fejl (HTTP ",
+  "Bilinfo tager ikke et højere versionsnummer end 2147483647. Intet blev sendt; angiv selv et versionsnummer, der er højere end bilens sidste.",
   "Bilinfo. Henvendelsen slettes aldrig.",
   "BilinfoHttpError",
   "Brug adressen på et billede, Bilinfo allerede har (https på bilinfo.net).",
