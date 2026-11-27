@@ -7,14 +7,19 @@ import type { ActAs } from '../act-as.js';
  * Server-side guards that apply to every tool call, whether it arrives over
  * MCP or through the embeddable gateway entry point.
  *
- * - Write tools are opt-in per instance (EXAMPLE_ENABLE_WRITES=true).
- * - EXAMPLE_DISABLED_TOOLS turns individual tools off; they are not even
+ * - Write tools are opt-in per instance (BILINFO_ENABLE_WRITES=true). This
+ *   version has no write tool, so the switch changes nothing yet; the gate
+ *   is in place, and tested, for the first tool that changes something.
+ * - BILINFO_DISABLED_TOOLS turns individual tools off; they are not even
  *   registered.
  *
- * The template has no input allowlists. A server that adds one (account or
- * project ids) adds it to checkInputPolicy, to the environment and to
- * InstancePolicy. Any client-side permission model sits on top of these;
- * the environment decides what the server will ever do.
+ * There are no input allowlists: the dealer an instance reads is fixed by
+ * its credentials and its dealerId, never by a tool's input. Any client-side
+ * permission model sits on top of these; the environment decides what the
+ * server will ever do.
+ *
+ * The reasons a call is refused for are in Danish: the person who asked
+ * reads them.
  *
  * An embedding host that serves several tenants from one process passes an
  * InstancePolicy to the gateway instead. That instance's calls then run with
@@ -33,13 +38,13 @@ export type AuditSink = (record: Readonly<Record<string, unknown>>) => void | Pr
 
 /** Policy given by an embedding host for one gateway instance. */
 export interface InstancePolicy {
-  /** Allow write tools. Default false. */
+  /** Allow write tools. Default false. This version has none, so it changes nothing yet. */
   enableWrites?: boolean;
   /** Tools turned off on this instance, with or without the prefix. Must name known tools. */
   disabledTools?: readonly string[];
   /**
    * Receives every audit record of this instance's calls, instead of
-   * EXAMPLE_AUDIT_LOG. Without it the instance writes no audit records. A
+   * BILINFO_AUDIT_LOG. Without it the instance writes no audit records. A
    * write tool runs only if its start record was accepted, so a sink that
    * throws refuses the write.
    */
@@ -132,14 +137,14 @@ export interface PolicyDecision {
   reason: string;
 }
 
-export const TOOL_PREFIX = 'example_';
+export const TOOL_PREFIX = 'bilinfo_';
 
 export function writesEnabled(): boolean {
   const hosted = currentInstancePolicy();
   if (hosted) {
     return hosted.enableWrites;
   }
-  return readEnvBoolean('EXAMPLE_ENABLE_WRITES', false);
+  return readEnvBoolean('BILINFO_ENABLE_WRITES', false);
 }
 
 /** Tool names are accepted with or without the prefix, case-insensitively. */
@@ -153,7 +158,7 @@ function disabledTools(): ReadonlySet<string> {
   if (hosted) {
     return hosted.disabledTools;
   }
-  return new Set(readEnvList('EXAMPLE_DISABLED_TOOLS').map(canonicalToolName));
+  return new Set(readEnvList('BILINFO_DISABLED_TOOLS').map(canonicalToolName));
 }
 
 export function isToolDisabled(toolName: string): boolean {
@@ -162,7 +167,7 @@ export function isToolDisabled(toolName: string): boolean {
 
 /**
  * Validate the policy environment once at startup: boolean switches must be
- * valid and EXAMPLE_DISABLED_TOOLS may only name known tools, so a typo
+ * valid and BILINFO_DISABLED_TOOLS may only name known tools, so a typo
  * cannot silently leave a tool enabled.
  */
 export function validatePolicyConfig(knownTools: readonly string[]): void {
@@ -171,14 +176,14 @@ export function validatePolicyConfig(knownTools: readonly string[]): void {
   const unknown = [...disabledTools()].filter(name => !known.has(name));
   if (unknown.length > 0) {
     // The names are not quoted: a configuration value is never echoed, not even shortened.
-    throw new ConfigError(`EXAMPLE_DISABLED_TOOLS names ${unknown.length} unknown tool(s).`);
+    throw new ConfigError(`BILINFO_DISABLED_TOOLS names ${unknown.length} unknown tool(s).`);
   }
 }
 
 export function checkToolPolicy(toolName: string, readOnly: boolean): PolicyDecision {
   if (isToolDisabled(toolName)) {
-    const source = currentInstancePolicy() ? 'by the embedding host' : '(EXAMPLE_DISABLED_TOOLS)';
-    return { allowed: false, reason: `tool is disabled on this instance ${source}: ${toolName}` };
+    const source = currentInstancePolicy() ? 'af den, der har sat forbindelsen op' : 'i opsætningen (BILINFO_DISABLED_TOOLS)';
+    return { allowed: false, reason: `Værktøjet er slået fra ${source}: ${toolName}` };
   }
   if (readOnly) {
     return { allowed: true, reason: 'read-only tool' };
@@ -187,10 +192,10 @@ export function checkToolPolicy(toolName: string, readOnly: boolean): PolicyDeci
     return {
       allowed: false,
       reason:
-        `write tool is disabled on this instance: ${toolName}. ` +
+        `Ændringer er ikke slået til for denne forbindelse, så ${toolName} blev ikke udført. ` +
         (currentInstancePolicy()
-          ? 'The embedding host has not enabled writes for this instance.'
-          : 'Set EXAMPLE_ENABLE_WRITES=true in the server environment to allow write tools.'),
+          ? 'Det styres af den, der har sat forbindelsen op.'
+          : 'Det styres i opsætningen (BILINFO_ENABLE_WRITES).'),
     };
   }
   return { allowed: true, reason: 'write tool (writes enabled on this instance)' };

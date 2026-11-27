@@ -1,25 +1,25 @@
 /**
- * The fixed outputs of the sink check (src/key-admission.ts): what leaves a
- * gateway instead of an output that holds a piece of the key. A small closed
- * set; a key that shares a piece with any of them is refused when the
- * gateway is created, so a fallback never holds a piece of the key.
+ * The fixed outputs of the sink check (src/secrets.ts): what leaves a
+ * gateway instead of an output that still holds a secret after redaction. A
+ * small closed set of our own texts: a secret that occurs in one of them is
+ * ordinary text and is not looked for.
  */
 
-/** The text of a result that was withheld. */
-export const RESULT_WITHHELD = 'Withheld: the answer held text that matches the key of this instance.';
+/** The text of a result that was withheld. In Danish: the person who asked reads it. */
+export const RESULT_WITHHELD = 'Svaret er tilbageholdt, fordi det indeholdt tekst, der svarer til adgangskoden eller hemmeligheden for denne forbindelse.';
 
-/** The result a host gets instead of one that held a piece of the key. */
+/** The result a host gets instead of one that held a secret. */
 export function withheldResult(): { isError: true; content: Array<{ type: 'text'; text: string }> } {
   return { isError: true, content: [{ type: 'text', text: RESULT_WITHHELD }] };
 }
 
-/** The audit record written instead of one that held a piece of the key. */
+/** The audit record written instead of one that held a secret. */
 export function withheldAuditRecord(): Record<string, unknown> {
   return { auditRecord: 'withheld' };
 }
 
-/** The stderr line written instead of one that held a piece of the key. */
-export const STDERR_WITHHELD = '[example-mcp] audit log write failed.';
+/** The stderr line written instead of one that held a secret. */
+export const STDERR_WITHHELD = '[bilinfo-mcp] audit log write failed.';
 
 /** Names a host may log with a refusal: the error classes a gateway throws. */
 const ERROR_NAMES = ['ConfigError', 'Error'];

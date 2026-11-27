@@ -1,8 +1,8 @@
 {
-  "name": "mcp-server-example",
-  "version": "0.4.0",
-  "mcpName": "io.github.borgels/mcp-server-example",
-  "description": "Unofficial MCP server for the Example API.",
+  "name": "mcp-server-bilinfo",
+  "version": "0.1.0",
+  "mcpName": "io.github.borgels/mcp-server-bilinfo",
+  "description": "Unofficial MCP server for Bilinfo: a car dealer's vehicles for sale, dealer and user lookups.",
   "type": "module",
   "main": "./dist/transports/stdio.js",
   "exports": {
@@ -20,7 +20,7 @@
     ".env.example"
   ],
   "bin": {
-    "mcp-server-example": "./dist/transports/stdio.js"
+    "mcp-server-bilinfo": "./dist/transports/stdio.js"
   },
   "scripts": {
     "build": "tsup src/transports/stdio.ts src/transports/http.ts src/gateway.ts --format esm --dts --clean --sourcemap",
@@ -33,12 +33,15 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/borgels/mcp-server-example.git"
+    "url": "git+https://github.com/borgels/mcp-server-bilinfo.git"
   },
   "keywords": [
     "mcp",
     "model-context-protocol",
-    "example"
+    "bilinfo",
+    "car-dealer",
+    "vehicles",
+    "denmark"
   ],
   "author": "",
   "license": "FSL-1.1-ALv2",
@@ -46,9 +49,9 @@
     "node": ">=22"
   },
   "bugs": {
-    "url": "https://github.com/borgels/mcp-server-example/issues"
+    "url": "https://github.com/borgels/mcp-server-bilinfo/issues"
   },
-  "homepage": "https://github.com/borgels/mcp-server-example#readme",
+  "homepage": "https://github.com/borgels/mcp-server-bilinfo#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^4.6.7"
