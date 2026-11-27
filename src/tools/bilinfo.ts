@@ -133,6 +133,12 @@ export interface ToolDefinition<S extends z.ZodRawShape = z.ZodRawShape> {
    * per role gives it only to roles that may read everything. Default false.
    */
   broad?: boolean;
+  /**
+   * The risk level the gateway catalog gives the tool when it differs from what the MCP annotations say. Only `write`,
+   * for a change that overwrites data but deletes nothing (CHANGE_TOOL_ANNOTATIONS): the MCP hint stays accurate
+   * (destructiveHint true), and a host that grants changes per role sees it as an everyday change, not a deletion.
+   */
+  gatewayRisk?: 'write';
   /** A read tool is handed a client that can only read (readOnlyClient), whatever its handler tries. */
   handler: (client: UpstreamClient, input: z.infer<z.ZodObject<S>>) => Promise<unknown>;
 }
@@ -347,6 +353,7 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
         .describe('Kundens kontaktoplysninger, når de skal rettes. Udelad for kun at sætte status.'),
     },
     annotations: CHANGE_TOOL_ANNOTATIONS,
+    gatewayRisk: 'write',
     returnsUpstreamContent: false,
     summary: 'Kundehenvendelsen er opdateret i Bilinfo.',
     upstream: [
@@ -469,6 +476,7 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
         .describe('Tandrem.'),
     },
     annotations: CHANGE_TOOL_ANNOTATIONS,
+    gatewayRisk: 'write',
     returnsUpstreamContent: false,
     summary: 'Bilen er sendt til Bilinfo.',
     upstream: [{ access: 'write', method: 'POST', service: 'cars', path: SAVE_CAR_PATH }],
@@ -487,6 +495,7 @@ export const BILINFO_TOOLS: ToolDefinition[] = [
       salesPrice: moneySchema.optional().describe('Salgsprisen i kroner, hvis den skal med.'),
     },
     annotations: CHANGE_TOOL_ANNOTATIONS,
+    gatewayRisk: 'write',
     returnsUpstreamContent: false,
     summary: 'Bilen er meldt solgt til Bilinfo.',
     upstream: [{ access: 'write', method: 'POST', service: 'cars', path: SELL_CAR_PATH }],

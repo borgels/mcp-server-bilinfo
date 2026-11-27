@@ -278,6 +278,13 @@ describe('gateway export', () => {
       ['save_car', 'write', false],
       ['mark_car_sold', 'write', false],
     ]);
+    // The MCP hint says the changes overwrite data; the gateway gives them its own level, write, since none deletes.
+    const changes = BILINFO_TOOLS.filter(t => !t.annotations.readOnlyHint);
+    expect(changes.map(t => [t.name, t.annotations.destructiveHint, t.gatewayRisk])).toEqual([
+      ['bilinfo_update_lead', true, 'write'],
+      ['bilinfo_save_car', true, 'write'],
+      ['bilinfo_mark_car_sold', true, 'write'],
+    ]);
     const ajv = new Ajv({ strict: true });
     for (const tool of bilinfoGatewayTools) {
       expect(() => ajv.compile(tool.inputSchema), tool.name).not.toThrow();

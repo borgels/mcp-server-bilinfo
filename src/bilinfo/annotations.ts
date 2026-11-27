@@ -23,13 +23,15 @@ export const WRITE_TOOL_ANNOTATIONS = {
 
 /**
  * For the changes a dealer makes every day: save a car, mark it as sold, set a lead's status. Each replaces what was
- * there (a car is set to exactly what is sent), but none deletes anything: a car taken off Bilbasen stays in Bilinfo,
- * a sold car keeps its history, and a lead is never removed. Not idempotent: each car upload has a new version, and a
- * sale is refused the second time. They pass the same write gate as WRITE_TOOL_ANNOTATIONS.
+ * there (a car is set to exactly what is sent, a lead's status and contact details are overwritten, a sold car leaves
+ * the ads), so they are not additive and the MCP hint says so. None deletes anything: a car taken off Bilbasen stays in
+ * Bilinfo, a sold car keeps its history, and a lead is never removed. Not idempotent: each car upload has a new
+ * version, and a sale is refused the second time. They pass the same write gate as WRITE_TOOL_ANNOTATIONS. The gateway
+ * catalog gives them its own risk level, `write` (ToolDefinition.gatewayRisk), not the hint's.
  */
 export const CHANGE_TOOL_ANNOTATIONS = {
   readOnlyHint: false,
-  destructiveHint: false,
+  destructiveHint: true,
   idempotentHint: false,
   openWorldHint: true,
 } as const;

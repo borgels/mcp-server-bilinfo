@@ -168,7 +168,9 @@ function toGatewayDefinition(tool: ToolDefinition): GatewayToolDefinition {
     name: stripPrefix(tool.name),
     title: tool.title,
     description: tool.description,
-    riskLevel: tool.annotations.readOnlyHint ? 'read' : tool.annotations.destructiveHint ? 'destructive' : 'write',
+    riskLevel: tool.annotations.readOnlyHint
+      ? 'read'
+      : (tool.gatewayRisk ?? (tool.annotations.destructiveHint ? 'destructive' : 'write')),
     enabledByDefault: tool.annotations.readOnlyHint,
     inputSchema: toGatewayJsonSchema(tool),
   };
